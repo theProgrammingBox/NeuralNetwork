@@ -33,14 +33,50 @@ inline void printTensorDev(float* TensorDev, int width, int height, const char* 
     free(TensorHost);
 }
 
+__global__ void gpuRandFunc(float* arr, uint32_t size, uint32_t seed1, uint32_t seed2)
+{
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        uint32_t Hash = idx;
+
+        Hash ^= seed1;
+        Hash *= 0xBAC57D37;
+        Hash ^= seed2;
+        Hash *= 0x24F66AC9;
+
+        arr[idx] = int32_t(Hash) * 0.0000000004656612875245796f;
+    }
+}
+
+struct GpuRand {
+    uint32_t seed1, seed2;
+
+    GpuRand() {
+        seed1 = time(NULL) ^ 0xE621B963;
+        seed2 = 0x6053653F ^ (time(NULL) >> 32);
+
+        printf("Seed1: %u\n", seed1);
+        printf("Seed2: %u\n\n", seed2);
+    }
+
+    void Rand(float* arr, uint32_t size) {
+        seed1 ^= seed2;
+        seed1 *= 0xBAC57D37;
+        seed2 ^= seed1;
+        seed2 *= 0x24F66AC9;
+
+        gpuRandFunc << <ceil(0.0009765625f * size), 1024 >> > (arr, size, seed1, seed2);
+    }
+};
+
 int main()
 {
     cublasLtHandle_t ltHandle;
     checkCublasStatus(cublasLtCreate(&ltHandle));
 
-    const int aWidth = 4;
-    const int aHeight = 2;
-    const int dWidth = 3;
+    const int aWidth = 1024;
+    const int aHeight = 1024;
+    const int dWidth = 1024;
 
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_N;
@@ -58,11 +94,16 @@ int main()
     checkCublasStatus(cublasLtMatrixLayoutCreate(&cDesc, CUDA_R_32F, dWidth, aHeight, dWidth));
 
     // heuristics
+    void *workspace;
+    size_t workspaceSize = 1024 * 1024 * 4;
+    checkCudaStatus(cudaMalloc(&workspace, workspaceSize));
+    
     int returnedResults = 0;
     const int requestedAlgoCount = 32;
     cublasLtMatmulHeuristicResult_t heuristicResult[requestedAlgoCount];
     cublasLtMatmulPreference_t preference;
     checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
+    checkCublasStatus(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof(workspaceSize)));
     checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, opDesc, aDesc, bDesc, cDesc, cDesc, preference, requestedAlgoCount, heuristicResult, &returnedResults));
     
     if (returnedResults == 0)
@@ -79,10 +120,59 @@ int main()
     checkCudaStatus(cudaMalloc((void**)&bDev, aWidth * aHeight * sizeof(float)));
     checkCudaStatus(cudaMalloc((void**)&cDev, dWidth * aHeight * sizeof(float)));
     
+    // initialize tensors
+    GpuRand rand;
+    rand.Rand(aDev, dWidth * aWidth);
+    rand.Rand(bDev, aWidth * aHeight);
+    rand.Rand(cDev, dWidth * aHeight);
+    
     // print tensors
-    printTensorDev(aDev, aWidth, dWidth, "a");
-    printTensorDev(bDev, aWidth, aHeight, "b");
-    printTensorDev(cDev, aHeight, dWidth, "c");
+    // printTensorDev(bDev, aWidth, aHeight, "b");
+    // printTensorDev(aDev, dWidth, aWidth, "a");
+    // printTensorDev(cDev, dWidth, aHeight, "c");
+    
+    // benchmarking
+    cudaStream_t stream;
+    cudaEvent_t start, stop;
+    checkCudaStatus(cudaStreamCreate(&stream));
+    checkCudaStatus(cudaEventCreate(&start));
+    checkCudaStatus(cudaEventCreate(&stop));
+    
+    const int repeat = 100;
+    float times[repeat];
+    float bestTime = 0;
+    int bestAlgo = 0;
+    
+    for (int algo = returnedResults; algo--;)
+    {
+        for (int rep = repeat; rep--;)
+        {
+            checkCudaStatus(cudaEventRecord(start, stream));
+            
+            // checkCublasStatus(cublasLtMatmul(
+            //     ltHandle, opDesc, 
+            //     &alpha, aDev, aDesc, bDev, bDesc, 
+            //     &beta, cDev, cDesc, cDev, cDesc, 
+            //     &heuristicResult[algo].algo, workspace, workspaceSize, stream));
+            checkCudaStatus(cudaEventRecord(stop, stream));
+            checkCudaStatus(cudaEventSynchronize(stop));
+            checkCudaStatus(cudaEventElapsedTime(&times[rep], start, stop));
+        }
+        qsort(times, repeat, sizeof(float), [](const void* a, const void* b) -> int
+        {
+            return *(float*)a > *(float*)b;
+        });
+        
+        float time = times[repeat / 2];
+        printf("algo: %d, time: %f, workspace: %zu\n", algo, time, heuristicResult[algo].workspaceSize);
+        if (bestTime == 0 || time < bestTime)
+        {
+            bestTime = time;
+            bestAlgo = algo;
+        }
+    }
+    
+    printf("best algo: %d, time: %f, workspace: %zu\n", bestAlgo, bestTime, heuristicResult[bestAlgo].workspaceSize);
     
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(cDesc));
