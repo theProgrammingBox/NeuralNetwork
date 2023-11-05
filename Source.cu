@@ -41,6 +41,22 @@ int main()
     checkCublasStatus(cublasLtMatrixLayoutCreate(&bDesc, CUDA_R_32F, aWidth, aHeight, aWidth));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&cDesc, CUDA_R_32F, dWidth, aHeight, dWidth));
 
+    // heuristics
+    cublasLtMatmulPreference_t preference = NULL;
+    checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
+    const int requestedAlgoCount = 32;
+    int returnedResults = 0;
+    cublasLtMatmulHeuristicResult_t heuristicResult[requestedAlgoCount] = { 0 };
+    checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, opDesc, aDesc, bDesc, cDesc, cDesc, preference, requestedAlgoCount, heuristicResult, &returnedResults));
+    
+    if (returnedResults == 0) {
+        checkCublasStatus(CUBLAS_STATUS_NOT_SUPPORTED);
+    }
+    
+    // print heuristics
+    for (int i = 0; i < returnedResults; i++)
+        printf("heuristic %d: workspace %zu\n", i, heuristicResult[i].workspaceSize);
+
     checkCublasStatus(cublasLtMatrixLayoutDestroy(cDesc));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(bDesc));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(aDesc));
