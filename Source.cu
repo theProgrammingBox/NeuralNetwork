@@ -17,6 +17,22 @@ inline void checkCublasStatus(cublasStatus_t status) {
     }
 }
 
+inline void printTensorDev(float* TensorDev, int width, int height, const char* name)
+{
+    float* TensorHost = (float*)malloc(width * height * sizeof(float));
+    checkCudaStatus(cudaMemcpy(TensorHost, TensorDev, width * height * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    printf("%s:\n", name);
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+            printf("%f, ", TensorHost[i * width + j]);
+        printf("\n");
+    }
+    printf("\n");
+    free(TensorHost);
+}
+
 int main()
 {
     cublasLtHandle_t ltHandle;
@@ -42,21 +58,33 @@ int main()
     checkCublasStatus(cublasLtMatrixLayoutCreate(&cDesc, CUDA_R_32F, dWidth, aHeight, dWidth));
 
     // heuristics
-    cublasLtMatmulPreference_t preference = NULL;
-    checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
-    const int requestedAlgoCount = 32;
     int returnedResults = 0;
-    cublasLtMatmulHeuristicResult_t heuristicResult[requestedAlgoCount] = { 0 };
+    const int requestedAlgoCount = 32;
+    cublasLtMatmulHeuristicResult_t heuristicResult[requestedAlgoCount];
+    cublasLtMatmulPreference_t preference;
+    checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
     checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, opDesc, aDesc, bDesc, cDesc, cDesc, preference, requestedAlgoCount, heuristicResult, &returnedResults));
     
-    if (returnedResults == 0) {
+    if (returnedResults == 0)
         checkCublasStatus(CUBLAS_STATUS_NOT_SUPPORTED);
-    }
     
     // print heuristics
     for (int i = 0; i < returnedResults; i++)
         printf("heuristic %d: workspace %zu\n", i, heuristicResult[i].workspaceSize);
-
+    printf("\n");
+    
+    // allocate memory
+    float *aDev, *bDev, *cDev;
+    checkCudaStatus(cudaMalloc((void**)&aDev, dWidth * aWidth * sizeof(float)));
+    checkCudaStatus(cudaMalloc((void**)&bDev, aWidth * aHeight * sizeof(float)));
+    checkCudaStatus(cudaMalloc((void**)&cDev, dWidth * aHeight * sizeof(float)));
+    
+    // print tensors
+    printTensorDev(aDev, aWidth, dWidth, "a");
+    printTensorDev(bDev, aWidth, aHeight, "b");
+    printTensorDev(cDev, aHeight, dWidth, "c");
+    
+    checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(cDesc));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(bDesc));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(aDesc));
