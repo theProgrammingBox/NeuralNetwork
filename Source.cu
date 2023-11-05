@@ -1,9 +1,7 @@
 #include <stdio.h>
-// #include <stdlib.h>
-// #include <time.h>
 
 #include <cuda_runtime.h>
-#include <cublas_v2.h>
+#include <cublasLt.h>
 
 inline void checkCudaStatus(cudaError_t status) {
     if (status != cudaSuccess) {
@@ -21,42 +19,33 @@ inline void checkCublasStatus(cublasStatus_t status) {
 
 int main()
 {
-    cublasHandle_t handle;
-    checkCublasStatus(cublasCreate(&handle));
+    cublasLtHandle_t ltHandle;
+    checkCublasStatus(cublasLtCreate(&ltHandle));
 
-    float *d_A, *d_B, *d_C;
-    checkCudaStatus(cudaMalloc((void **)&d_A, sizeof(float) * 3 * 2));
-    checkCudaStatus(cudaMalloc((void **)&d_B, sizeof(float) * 2 * 3));
-    checkCudaStatus(cudaMalloc((void **)&d_C, sizeof(float) * 3 * 3));
+    const int aWidth = 4;
+    const int aHeight = 2;
+    const int dWidth = 3;
 
-    float h_A[6] = {1, 2, 3, 4, 5, 6};
-    float h_B[6] = {1, 2, 3, 4, 5, 6};
-    float h_C[9] = {0};
+    cublasOperation_t transa = CUBLAS_OP_N;
+    cublasOperation_t transb = CUBLAS_OP_N;
 
-    checkCudaStatus(cudaMemcpy(d_A, h_A, sizeof(float) * 3 * 2, cudaMemcpyHostToDevice));
-    checkCudaStatus(cudaMemcpy(d_B, h_B, sizeof(float) * 2 * 3, cudaMemcpyHostToDevice));
-    checkCudaStatus(cudaMemcpy(d_C, h_C, sizeof(float) * 3 * 3, cudaMemcpyHostToDevice));
+    // Create descriptors
+    cublasLtMatmulDesc_t opDesc;
+    cublasLtMatrixLayout_t aDesc, bDesc, cDesc;
 
-    float alpha = 1.0f;
-    float beta = 0.0f;
+    checkCublasStatus(cublasLtMatmulDescCreate(&opDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
+    
+    checkCublasStatus(cublasLtMatrixLayoutCreate(&aDesc, CUDA_R_32F, dWidth, aWidth, dWidth));
+    checkCublasStatus(cublasLtMatrixLayoutCreate(&bDesc, CUDA_R_32F, aWidth, aHeight, aWidth));
+    checkCublasStatus(cublasLtMatrixLayoutCreate(&cDesc, CUDA_R_32F, dWidth, aHeight, dWidth));
 
-    checkCublasStatus(cublasSgemm(
-        handle, CUBLAS_OP_N,CUBLAS_OP_N,
-        3, 3, 2,
-        &alpha,
-        d_A, 3,
-        d_B, 2,
-        &beta,
-        d_C, 3));
-
-    checkCudaStatus(cudaMemcpy(h_C, d_C, sizeof(float) * 3 * 3, cudaMemcpyDeviceToHost));
-
-    for (int i = 0; i < 9; i++)
-        printf("%f ", h_C[i]);
-
-    checkCudaStatus(cudaFree(d_A));
-    checkCudaStatus(cudaFree(d_B));
-    checkCudaStatus(cudaFree(d_C));
+    checkCublasStatus(cublasLtMatrixLayoutDestroy(cDesc));
+    checkCublasStatus(cublasLtMatrixLayoutDestroy(bDesc));
+    checkCublasStatus(cublasLtMatrixLayoutDestroy(aDesc));
+    checkCublasStatus(cublasLtMatmulDescDestroy(opDesc));
+    checkCublasStatus(cublasLtDestroy(ltHandle));
 
     return 0;
 }
