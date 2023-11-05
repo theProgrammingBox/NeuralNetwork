@@ -75,8 +75,8 @@ int main()
     checkCublasStatus(cublasLtCreate(&ltHandle));
 
     const int aWidth = 1024;
-    const int aHeight = 1024;
-    const int dWidth = 1024;
+    const int aHeight = 256;
+    const int dWidth = 128;
 
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_N;
@@ -138,41 +138,53 @@ int main()
     checkCudaStatus(cudaEventCreate(&start));
     checkCudaStatus(cudaEventCreate(&stop));
     
-    const int repeat = 100;
+    const int repeat = 1000;
     float times[repeat];
     float bestTime = 0;
     int bestAlgo = 0;
+    float meanTime, medianTime;
+    
+    float alpha = 1.0f;
+    float beta = 0.0f;
     
     for (int algo = returnedResults; algo--;)
     {
+        meanTime = 0;
+        medianTime = 0;
         for (int rep = repeat; rep--;)
         {
             checkCudaStatus(cudaEventRecord(start, stream));
             
-            // checkCublasStatus(cublasLtMatmul(
-            //     ltHandle, opDesc, 
-            //     &alpha, aDev, aDesc, bDev, bDesc, 
-            //     &beta, cDev, cDesc, cDev, cDesc, 
-            //     &heuristicResult[algo].algo, workspace, workspaceSize, stream));
+            checkCublasStatus(cublasLtMatmul(
+                ltHandle, opDesc, 
+                &alpha,
+                aDev, aDesc,
+                bDev, bDesc, 
+                &beta,
+                cDev, cDesc,
+                cDev, cDesc, 
+                &heuristicResult[algo].algo, workspace, workspaceSize, stream));
+                
             checkCudaStatus(cudaEventRecord(stop, stream));
             checkCudaStatus(cudaEventSynchronize(stop));
             checkCudaStatus(cudaEventElapsedTime(&times[rep], start, stop));
+            meanTime += times[rep];
         }
         qsort(times, repeat, sizeof(float), [](const void* a, const void* b) -> int
         {
             return *(float*)a > *(float*)b;
         });
         
-        float time = times[repeat / 2];
-        printf("algo: %d, time: %f, workspace: %zu\n", algo, time, heuristicResult[algo].workspaceSize);
-        if (bestTime == 0 || time < bestTime)
+        medianTime = times[repeat / 2];
+        printf("algo: %d, medianTime: %f, meanTime: %f, workspace: %zu\n", algo, medianTime, meanTime / repeat, heuristicResult[algo].workspaceSize);
+        if (bestTime == 0 || medianTime < bestTime)
         {
-            bestTime = time;
+            bestTime = medianTime;
             bestAlgo = algo;
         }
     }
     
-    printf("best algo: %d, time: %f, workspace: %zu\n", bestAlgo, bestTime, heuristicResult[bestAlgo].workspaceSize);
+    printf("best algo: %d, medianTime: %f, workspace: %zu\n", bestAlgo, bestTime, heuristicResult[bestAlgo].workspaceSize);
     
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(cDesc));
