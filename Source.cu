@@ -74,9 +74,9 @@ int main()
     cublasLtHandle_t ltHandle;
     checkCublasStatus(cublasLtCreate(&ltHandle));
 
-    const int aWidth = 1024;
-    const int aHeight = 256;
-    const int dWidth = 128;
+    const int aWidth = 4;
+    const int aHeight = 3;
+    const int dWidth = 2;
 
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_N;
@@ -86,8 +86,10 @@ int main()
     cublasLtMatrixLayout_t aDesc, bDesc, cDesc;
 
     checkCublasStatus(cublasLtMatmulDescCreate(&opDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
+    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
+    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
+    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_RELU;
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
     
     checkCublasStatus(cublasLtMatrixLayoutCreate(&aDesc, CUDA_R_32F, dWidth, aWidth, dWidth));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&bDesc, CUDA_R_32F, aWidth, aHeight, aWidth));
@@ -124,12 +126,7 @@ int main()
     GpuRand rand;
     rand.Rand(aDev, dWidth * aWidth);
     rand.Rand(bDev, aWidth * aHeight);
-    rand.Rand(cDev, dWidth * aHeight);
-    
-    // print tensors
-    // printTensorDev(bDev, aWidth, aHeight, "b");
-    // printTensorDev(aDev, dWidth, aWidth, "a");
-    // printTensorDev(cDev, dWidth, aHeight, "c");
+    // rand.Rand(cDev, dWidth * aHeight);
     
     // benchmarking
     cudaStream_t stream;
@@ -185,6 +182,11 @@ int main()
     }
     
     printf("best algo: %d, medianTime: %f, workspace: %zu\n", bestAlgo, bestTime, heuristicResult[bestAlgo].workspaceSize);
+    
+    // print tensors
+    printTensorDev(bDev, aWidth, aHeight, "b");
+    printTensorDev(aDev, dWidth, aWidth, "a");
+    printTensorDev(cDev, dWidth, aHeight, "c");
     
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(cDesc));
