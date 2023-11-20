@@ -1,4 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <stdint.h>
 
 #include <cuda_runtime.h>
 #include <cublasLt.h>
@@ -74,9 +77,9 @@ int main()
     cublasLtHandle_t ltHandle;
     checkCublasStatus(cublasLtCreate(&ltHandle));
 
-    const int aWidth = 4;
-    const int aHeight = 3;
-    const int dWidth = 2;
+    const int aWidth = 1024;
+    const int aHeight = 1024;
+    const int dWidth = 1024;
 
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_N;
@@ -86,8 +89,8 @@ int main()
     cublasLtMatrixLayout_t aDesc, bDesc, cDesc;
 
     checkCublasStatus(cublasLtMatmulDescCreate(&opDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
-    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
-    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
     cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_RELU;
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
     
@@ -96,16 +99,16 @@ int main()
     checkCublasStatus(cublasLtMatrixLayoutCreate(&cDesc, CUDA_R_32F, dWidth, aHeight, dWidth));
 
     // heuristics
-    void *workspace;
-    size_t workspaceSize = 1024 * 1024 * 4;
-    checkCudaStatus(cudaMalloc(&workspace, workspaceSize));
+    // void *workspace;
+    // size_t workspaceSize = 0;//1024 * 1024 * 4;
+    // checkCudaStatus(cudaMalloc(&workspace, workspaceSize));
     
     int returnedResults = 0;
     const int requestedAlgoCount = 32;
     cublasLtMatmulHeuristicResult_t heuristicResult[requestedAlgoCount];
     cublasLtMatmulPreference_t preference;
     checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
-    checkCublasStatus(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof(workspaceSize)));
+    // checkCublasStatus(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof(workspaceSize)));
     checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, opDesc, aDesc, bDesc, cDesc, cDesc, preference, requestedAlgoCount, heuristicResult, &returnedResults));
     
     if (returnedResults == 0)
@@ -135,7 +138,7 @@ int main()
     checkCudaStatus(cudaEventCreate(&start));
     checkCudaStatus(cudaEventCreate(&stop));
     
-    const int repeat = 1000;
+    const int repeat = 4096;
     float times[repeat];
     float bestTime = 0;
     int bestAlgo = 0;
@@ -160,7 +163,7 @@ int main()
                 &beta,
                 cDev, cDesc,
                 cDev, cDesc, 
-                &heuristicResult[algo].algo, workspace, workspaceSize, stream));
+                &heuristicResult[algo].algo, NULL, 0, stream));
                 
             checkCudaStatus(cudaEventRecord(stop, stream));
             checkCudaStatus(cudaEventSynchronize(stop));
@@ -184,9 +187,9 @@ int main()
     printf("best algo: %d, medianTime: %f, workspace: %zu\n", bestAlgo, bestTime, heuristicResult[bestAlgo].workspaceSize);
     
     // print tensors
-    printTensorDev(bDev, aWidth, aHeight, "b");
-    printTensorDev(aDev, dWidth, aWidth, "a");
-    printTensorDev(cDev, dWidth, aHeight, "c");
+    // printTensorDev(bDev, aWidth, aHeight, "b");
+    // printTensorDev(aDev, dWidth, aWidth, "a");
+    // printTensorDev(cDev, dWidth, aHeight, "c");
     
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(cDesc));
