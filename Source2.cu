@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/time.h>
-
-#include <cuda_runtime.h>
 #include <cublasLt.h>
 
 inline void checkCudaStatus(cudaError_t status) {
@@ -89,7 +87,7 @@ int main() {
     
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_N;
-    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_RELU;
+    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_BIAS;
     
     cublasLtMatmulDesc_t opDesc;
     cublasLtMatrixLayout_t descA, descB, descC, descD;
@@ -104,18 +102,19 @@ int main() {
     checkCublasStatus(cublasLtMatmulDescCreate(&opDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
+    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
+    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &dTensorC, sizeof(dTensorC)));
     
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descA, CUDA_R_32F, dWidth, aWidth, dWidth));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descB, CUDA_R_32F, aWidth, aHeight, aWidth));
-    checkCublasStatus(cublasLtMatrixLayoutCreate(&descC, CUDA_R_32F, dWidth, aHeight, dWidth));
+    // checkCublasStatus(cublasLtMatrixLayoutCreate(&descC, CUDA_R_32F, dWidth, 1, 0));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descD, CUDA_R_32F, dWidth, aHeight, dWidth));
     
     checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
-    checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, opDesc, descA, descB, descC, descD, preference, 1, &heuristicResult, &returnedResults));
+    checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, opDesc, descA, descB, descD, descD, preference, 1, &heuristicResult, &returnedResults));
     
     algo = heuristicResult.algo;
-    float alpha = 1.0f, beta = 1.0f;
+    float alpha = 1.0f, beta = 0.0f;
     
     checkCublasStatus(cublasLtMatmul(
         ltHandle, opDesc,
@@ -123,7 +122,7 @@ int main() {
         dTensorA, descA,
         dTensorB, descB,
         &beta,
-        dTensorC, descC,
+        dTensorD, descD,
         dTensorD, descD,
         &algo, NULL, 0, 0));
         
@@ -132,7 +131,7 @@ int main() {
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descA));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descB));
-    checkCublasStatus(cublasLtMatrixLayoutDestroy(descC));
+    // checkCublasStatus(cublasLtMatrixLayoutDestroy(descC));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descD));
     checkCublasStatus(cublasLtMatmulDescDestroy(opDesc));
     checkCublasStatus(cublasLtDestroy(ltHandle));
