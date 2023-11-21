@@ -77,7 +77,7 @@ int main() {
     uint32_t seed1, seed2;
     initializeSeeds(&seed1, &seed2);
     
-    uint16_t aWidth = 4, aHeight = 3, dWidth = 64;
+    uint16_t aWidth = 4, aHeight = 3, dWidth = 2;
     
     float *dTensorA, *dTensorB, *dTensorC, *dTensorD;
     checkCudaStatus(cudaMalloc((void **)&dTensorA, dWidth * aWidth * sizeof(float)));
@@ -91,14 +91,6 @@ int main() {
     fillDTensor(dTensorA, dWidth * aWidth, &seed1, &seed2);
     fillDTensor(dTensorB, aWidth * aHeight, &seed1, &seed2);
     fillDTensor(dTensorC, dWidth * 1, &seed1, &seed2);
-    
-    float hTensorDG[dWidth * aHeight] = {
-        -1, 0,
-        0, -1,
-        1, 1
-    };
-    checkCudaStatus(cudaMemcpy(dTensorDG, hTensorDG, dWidth * aWidth * sizeof(float), cudaMemcpyHostToDevice));
-    printDTensor(dTensorDG, dWidth, aHeight, "Output Gradient");
     
     printDTensor(dTensorA, dWidth, aWidth, "Weight");
     printDTensor(dTensorB, aWidth, aHeight, "Input");
@@ -157,6 +149,48 @@ int main() {
     
     checkCudaStatus(cudaMemcpy(hostMemory, idk, size, cudaMemcpyDeviceToHost));
     printBits(hostMemory, size);
+    
+    float* hTensorDGrad = (float *)malloc(dWidth * aHeight * sizeof(float));
+    for (uint32_t i = 0; i < dWidth * aHeight; i++) {
+        hTensorDGrad[i] = 1.0f;
+    }
+    
+    float *dTensorAGrad, *dTensorBGrad, *dTensorDGrad;
+    checkCudaStatus(cudaMalloc((void **)&dTensorAGrad, dWidth * aWidth * sizeof(float)));
+    checkCudaStatus(cudaMalloc((void **)&dTensorBGrad, aWidth * aHeight * sizeof(float)));
+    checkCudaStatus(cudaMalloc((void **)&dTensorDGrad, dWidth * aHeight * sizeof(float)));
+    
+    checkCudaStatus(cudaMemcpy(dTensorDGrad, hTensorDGrad, dWidth * aHeight * sizeof(float), cudaMemcpyHostToDevice));
+    
+    printDTensor(dTensorDGrad, dWidth, aHeight, "Output Gradient");
+    cublasLtMatmulDesc_t opInputGradDesc;
+    cublasLtEpilogue_t drelu = cublasLtEpilogue_t(8 | 128);// CUBLASLT_EPILOGUE_DRELU;
+    cublasOperation_t trans = CUBLAS_OP_T;
+    size_t ww = 8;
+    checkCublasStatus(cublasLtMatmulDescCreate(&opInputGradDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opInputGradDesc, CUBLASLT_MATMUL_DESC_TRANSA, &trans, sizeof(trans)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opInputGradDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &drelu, sizeof(drelu)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opInputGradDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER, &idk, sizeof(idk)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opInputGradDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD, &size, sizeof(size)));
+    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opInputGradDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_BATCH_STRIDE, &ww, sizeof(ww)));
+    
+    
+    printf("idk: %p\n", idk);
+    checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, opInputGradDesc, descA, descD, descB, descB, preference, 1, &heuristicResult, &returnedResults));
+    printf("idk: %p\n", idk);
+    algo = heuristicResult.algo;
+    
+    checkCublasStatus(cublasLtMatmul(
+        ltHandle, opInputGradDesc,
+        &alpha,
+        dTensorA, descA,
+        dTensorDGrad, descD,
+        &beta,
+        dTensorBGrad, descB,
+        dTensorBGrad, descB,
+        &algo, NULL, 0, 0));
+    
+    
     
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descA));
