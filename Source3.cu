@@ -100,7 +100,7 @@ int main() {
     cublasLtMatmulPreference_t preference;
     cublasLtMatrixLayout_t weightLayouts[networkLayers], outputLayouts[networkLayers + 1];
     cublasLtMatmulAlgo_t outputAlgos[networkLayers], inputGradAlgos[networkLayers], weightGradAlgos[networkLayers];
-    cublasLtEpilogue_t reluEp = CUBLASLT_EPILOGUE_RELU;
+    cublasLtEpilogue_t reluEp = CUBLASLT_EPILOGUE_RELU_AUX;
     cublasOperation_t transOp = CUBLAS_OP_T;
     
     initializeSeeds(&seed1, &seed2);
@@ -110,14 +110,23 @@ int main() {
     checkCublasStatus(cublasLtMatmulDescCreate(&WeightGradOpDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
     
+    size_t size = 128;
+    void* idk;
+    checkCudaStatus(cudaMalloc(&idk, size * sizeof(float)));
+    
     checkCublasStatus(cublasLtMatmulDescSetAttribute(OutputOpDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &reluEp, sizeof(reluEp)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(OutputOpDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER, &idk, sizeof(idk)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(OutputOpDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD, &size, sizeof(size)));
+    
     checkCublasStatus(cublasLtMatmulDescSetAttribute(InputGradOpDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transOp, sizeof(transOp)));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(WeightGradOpDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transOp, sizeof(transOp)));
+    
     
     checkCudaStatus(cudaMalloc(&outputTensors[0], networkParameters[0] * networkBatches * sizeof(float)));
     checkCudaStatus(cudaMalloc(&outputGradTensors[0], networkParameters[0] * networkBatches * sizeof(float)));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&outputLayouts[0], CUDA_R_32F, networkParameters[0], networkBatches, networkParameters[0]));
     for (uint8_t i = 0; i < networkLayers; i++) {
+    
         checkCudaStatus(cudaMalloc(&weightTensors[i], networkParameters[i + 1] * networkParameters[i] * sizeof(float)));
         checkCudaStatus(cudaMalloc(&outputTensors[i + 1], networkParameters[i + 1] * networkBatches * sizeof(float)));
         
@@ -126,11 +135,11 @@ int main() {
         
         checkCublasStatus(cublasLtMatrixLayoutCreate(&weightLayouts[i], CUDA_R_32F, networkParameters[i + 1], networkParameters[i], networkParameters[i + 1]));
         checkCublasStatus(cublasLtMatrixLayoutCreate(&outputLayouts[i + 1], CUDA_R_32F, networkParameters[i + 1], networkBatches, networkParameters[i + 1]));
-        
+        printf("hi\n");
         cublasLtMatmulHeuristicResult_t heuristicResult;
         int returnedResults;
         checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, OutputOpDesc, weightLayouts[i], outputLayouts[i], outputLayouts[i + 1], outputLayouts[i + 1], preference, 1, &heuristicResult, &returnedResults));
-        outputAlgos[i] = heuristicResult.algo;
+        outputAlgos[i] = heuristicResult.algo;printf("hi\n");
         checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, InputGradOpDesc, weightLayouts[i], outputLayouts[i + 1], outputLayouts[i], outputLayouts[i], preference, 1, &heuristicResult, &returnedResults));
         inputGradAlgos[i] = heuristicResult.algo;
         checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, WeightGradOpDesc, outputLayouts[i + 1], outputLayouts[i], weightLayouts[i], weightLayouts[i], preference, 1, &heuristicResult, &returnedResults));
@@ -143,7 +152,7 @@ int main() {
     float outputGradTensor[networkParameters[networkLayers] * networkBatches];
     float expectedTensor[networkParameters[networkLayers] * networkBatches];
     float one = 1.0f, zero = 0.0f, negOne = -1.0f, learningRate = 0.1f / networkBatches;
-    for (uint32_t epoch = 0; epoch < 1000; epoch++) {
+    for (uint32_t epoch = 1000; epoch--;) {
         for (uint16_t i = 0; i < networkBatches; i++) {
             mixSeed(&seed1, &seed2);
             uint8_t a = seed1 & 1, b = seed2 & 1;
