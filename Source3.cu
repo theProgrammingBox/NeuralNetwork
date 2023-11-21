@@ -88,6 +88,16 @@ void addDTensors(float alpha, float *dTensor1, float *dTensor2, uint32_t size) {
     _addDTensors<<<(size >> 10) + (size & 0x3ff), 0x400>>>(alpha, dTensor1, dTensor2, size);
 }
 
+void printBits(void *mem, size_t size) {
+    unsigned char *bytes = (unsigned char *)mem;
+    for (size_t i = 0; i < size; i++) {
+        for (int j = 7; j >= 0; j--) {
+            printf("%c", (bytes[i] & (1 << j)) ? '1' : '0');
+        }
+    }
+    printf("\n");
+}
+
 int main() {
     const uint16_t networkBatches = 1024;
     const uint8_t networkLayers = 3;
@@ -110,9 +120,10 @@ int main() {
     checkCublasStatus(cublasLtMatmulDescCreate(&WeightGradOpDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
     
-    size_t size = 128;
+    size_t size = 128 * sizeof(float);
     void* idk;
-    checkCudaStatus(cudaMalloc(&idk, size * sizeof(float)));
+    checkCudaStatus(cudaMalloc(&idk, size));
+    void *hostMemory = malloc(size);
     
     checkCublasStatus(cublasLtMatmulDescSetAttribute(OutputOpDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &reluEp, sizeof(reluEp)));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(OutputOpDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER, &idk, sizeof(idk)));
@@ -223,6 +234,9 @@ int main() {
     //     printDTensor(weightGradTensors[i], networkParameters[i + 1], networkParameters[i], "Weight Grad");
     //     printDTensor(outputGradTensors[i], networkParameters[i], networkBatches, "Input Grad");
     // }
+    
+    checkCudaStatus(cudaMemcpy(hostMemory, idk, size, cudaMemcpyDeviceToHost));
+    printBits(hostMemory, size);
     
     return 0;
 }

@@ -63,6 +63,16 @@ void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *l
     free(tensor);
 }
 
+void printBits(void *mem, size_t size) {
+    unsigned char *bytes = (unsigned char *)mem;
+    for (size_t i = 0; i < size; i++) {
+        for (int j = 7; j >= 0; j--) {
+            printf("%c", (bytes[i] & (1 << j)) ? '1' : '0');
+        }
+    }
+    printf("\n");
+}
+
 int main() {
     uint32_t seed1, seed2;
     initializeSeeds(&seed1, &seed2);
@@ -92,13 +102,13 @@ int main() {
     
     printDTensor(dTensorA, dWidth, aWidth, "Weight");
     printDTensor(dTensorB, aWidth, aHeight, "Input");
-    printDTensor(dTensorC, dWidth, 1, "Bias");
+    // printDTensor(dTensorC, dWidth, 1, "Bias");
     
     cublasLtHandle_t ltHandle;
     
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_N;
-    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_GELU_BIAS;
+    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_RELU_AUX;
     
     cublasLtMatmulDesc_t opDesc;
     cublasLtMatrixLayout_t descA, descB, descD;
@@ -110,11 +120,17 @@ int main() {
     
     checkCublasStatus(cublasLtCreate(&ltHandle));
     
+    size_t size = 128 * sizeof(float);
+    void* idk;
+    checkCudaStatus(cudaMalloc(&idk, size));
+    void *hostMemory = malloc(size);
+    
     checkCublasStatus(cublasLtMatmulDescCreate(&opDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
-    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &dTensorC, sizeof(dTensorC)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER, &idk, sizeof(idk)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD, &size, sizeof(size)));
     
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descA, CUDA_R_32F, dWidth, aWidth, dWidth));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descB, CUDA_R_32F, aWidth, aHeight, aWidth));
@@ -137,6 +153,10 @@ int main() {
         &algo, NULL, 0, 0));
         
     printDTensor(dTensorD, dWidth, aHeight, "Output");
+    
+    
+    checkCudaStatus(cudaMemcpy(hostMemory, idk, size, cudaMemcpyDeviceToHost));
+    printBits(hostMemory, size);
     
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descA));
