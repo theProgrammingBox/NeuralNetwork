@@ -77,7 +77,7 @@ int main() {
     uint32_t seed1, seed2;
     initializeSeeds(&seed1, &seed2);
     
-    uint16_t aWidth = 4, aHeight = 3, dWidth = 2;
+    uint16_t aWidth = 4, aHeight = 3, dWidth = 64;
     
     float *dTensorA, *dTensorB, *dTensorC, *dTensorD;
     checkCudaStatus(cudaMalloc((void **)&dTensorA, dWidth * aWidth * sizeof(float)));
@@ -120,7 +120,7 @@ int main() {
     
     checkCublasStatus(cublasLtCreate(&ltHandle));
     
-    size_t size = 128 * sizeof(float);
+    size_t size = 128;
     void* idk;
     checkCudaStatus(cudaMalloc(&idk, size));
     void *hostMemory = malloc(size);
