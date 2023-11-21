@@ -26,27 +26,33 @@ void initializeSeeds(uint32_t *seed1, uint32_t *seed2) {
     for (uint8_t i = 8; i--;) {
         *seed2 *= 0xbf324c81;
         *seed1 ^= *seed2;
+        *seed1 ^= *seed1 >> 13;
         *seed1 *= 0x9c7493ad;
         *seed2 ^= *seed1;
+        *seed2 ^= *seed2 >> 17;
     }
 }
 
-__global__ void fillDTensor(float *dTensor, uint32_t size, uint32_t seed1, uint32_t seed2) {
+__global__ void _fillDTensor(float *dTensor, uint32_t size, uint32_t seed1, uint32_t seed2) {
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
 	seed1 ^= idx;
     seed1 *= 0x4ba1bb47;
+    seed1 ^= seed1 >> 17;
     seed1 ^= seed2;
     seed1 *= 0xb7ebcb79;
+    seed1 ^= seed1 >> 13;
     dTensor[idx] = (int32_t)seed1 * 0.0000000004656612875245797f;
 }
 
 void fillDTensor(float *dTensor, uint32_t size, uint32_t *seed1, uint32_t *seed2) {
     *seed2 *= 0xbf324c81;
     *seed1 ^= *seed2;
+    *seed1 ^= *seed1 >> 13;
     *seed1 *= 0x9c7493ad;
     *seed2 ^= *seed1;
-    fillDTensor<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size, *seed1, *seed2);
+    *seed2 ^= *seed2 >> 17;
+    _fillDTensor<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size, *seed1, *seed2);
 }
 
 void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *label) {
@@ -63,10 +69,29 @@ void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *l
     free(tensor);
 }
 
+void mixSeed(uint32_t *seed1, uint32_t *seed2) {
+    *seed2 *= 0xbf324c81;
+    *seed1 ^= *seed2;
+    *seed1 ^= *seed1 >> 17;
+    *seed1 *= 0x9c7493ad;
+    *seed2 ^= *seed1;
+    *seed2 ^= *seed2 >> 13;
+}
+
+__global__ void _addDTensors(float alpha, float *dTensor1, float *dTensor2, uint32_t size) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    dTensor1[idx] += alpha * dTensor2[idx];
+}
+
+void addDTensors(float alpha, float *dTensor1, float *dTensor2, uint32_t size) {
+    _addDTensors<<<(size >> 10) + (size & 0x3ff), 0x400>>>(alpha, dTensor1, dTensor2, size);
+}
+
 int main() {
-    const uint8_t networkBatches = 16;
-    const uint8_t networkLayers = 2;
-    uint8_t networkParameters[networkLayers + 1] = {2, 8, 1};
+    const uint16_t networkBatches = 1024;
+    const uint8_t networkLayers = 3;
+    uint8_t networkParameters[networkLayers + 1] = {3, 4, 4, 1};
     float* weightTensors[networkLayers], * outputTensors[networkLayers + 1];
     float* outputGradTensors[networkLayers + 1], * weightGradTensors[networkLayers];
     uint32_t seed1, seed2;
@@ -114,55 +139,81 @@ int main() {
         fillDTensor(weightTensors[i], networkParameters[i + 1] * networkParameters[i], &seed1, &seed2);
     }
     
-    fillDTensor(outputTensors[0], networkParameters[0] * networkBatches, &seed1, &seed2);
-    fillDTensor(outputGradTensors[networkLayers], networkParameters[networkLayers] * networkBatches, &seed1, &seed2);
-    
-    float alpha = 1.0f, beta = 0.0f;
-    for (uint8_t i = 0; i < networkLayers; i++) {
-        checkCublasStatus(cublasLtMatmul(
-            ltHandle, OutputOpDesc,
-            &alpha,
-            weightTensors[i], weightLayouts[i],
-            outputTensors[i], outputLayouts[i],
-            &beta,
-            outputTensors[i + 1], outputLayouts[i + 1],
-            outputTensors[i + 1], outputLayouts[i + 1],
-            &outputAlgos[i], NULL, 0, 0));
+    float inputTensor[networkParameters[0] * networkBatches];
+    float outputGradTensor[networkParameters[networkLayers] * networkBatches];
+    float expectedTensor[networkParameters[networkLayers] * networkBatches];
+    float one = 1.0f, zero = 0.0f, negOne = -1.0f, learningRate = 0.1f / networkBatches;
+    for (uint32_t epoch = 0; epoch < 1000; epoch++) {
+        for (uint16_t i = 0; i < networkBatches; i++) {
+            mixSeed(&seed1, &seed2);
+            uint8_t a = seed1 & 1, b = seed2 & 1;
+            inputTensor[i * networkParameters[0]] = a;
+            inputTensor[i * networkParameters[0] + 1] = b;
+            inputTensor[i * networkParameters[0] + 2] = 1;
+            expectedTensor[i * networkParameters[networkLayers]] = a ^ b;
+        }
+        
+        checkCudaStatus(cudaMemcpy(outputTensors[0], inputTensor, networkParameters[0] * networkBatches * sizeof(float), cudaMemcpyHostToDevice));
+        checkCudaStatus(cudaMemcpy(outputGradTensors[networkLayers], expectedTensor, networkParameters[networkLayers] * networkBatches * sizeof(float), cudaMemcpyHostToDevice));
+        
+        for (uint8_t i = 0; i < networkLayers; i++) {
+            checkCublasStatus(cublasLtMatmul(
+                ltHandle, OutputOpDesc,
+                &one,
+                weightTensors[i], weightLayouts[i],
+                outputTensors[i], outputLayouts[i],
+                &zero,
+                outputTensors[i + 1], outputLayouts[i + 1],
+                outputTensors[i + 1], outputLayouts[i + 1],
+                &outputAlgos[i], NULL, 0, 0));
+        }
+        
+        addDTensors(negOne, outputGradTensors[networkLayers], outputTensors[networkLayers], networkParameters[networkLayers] * networkBatches);
+        checkCudaStatus(cudaMemcpy(outputGradTensor, outputGradTensors[networkLayers], networkParameters[networkLayers] * networkBatches * sizeof(float), cudaMemcpyDeviceToHost));
+        float error = 0;
+        for (uint16_t i = networkParameters[networkLayers] * networkBatches; i--;) {
+            error += fabs(outputGradTensor[i]);
+        }
+        printf("Error: %f\n", error / networkBatches);
+        
+        for (uint8_t i = networkLayers; i--;) {
+            checkCublasStatus(cublasLtMatmul(
+                ltHandle, InputGradOpDesc,
+                &one,
+                weightTensors[i], weightLayouts[i],
+                outputGradTensors[i + 1], outputLayouts[i + 1],
+                &zero,
+                outputGradTensors[i], outputLayouts[i],
+                outputGradTensors[i], outputLayouts[i],
+                &inputGradAlgos[i], NULL, 0, 0));
+                
+            checkCublasStatus(cublasLtMatmul(
+                ltHandle, WeightGradOpDesc,
+                &one,
+                outputGradTensors[i + 1], outputLayouts[i + 1],
+                outputTensors[i], outputLayouts[i],
+                &zero,
+                weightGradTensors[i], weightLayouts[i],
+                weightGradTensors[i], weightLayouts[i],
+                &weightGradAlgos[i], NULL, 0, 0));
+        }
+        
+        for (uint8_t i = 0; i < networkLayers; i++) {
+            addDTensors(learningRate, weightTensors[i], weightGradTensors[i], networkParameters[i + 1] * networkParameters[i]);
+        }
     }
-    
+        
     // printDTensor(outputTensors[0], networkParameters[0], networkBatches, "Input");
     // for (uint8_t i = 0; i < networkLayers; i++) {
     //     printDTensor(weightTensors[i], networkParameters[i + 1], networkParameters[i], "Weights");
     //     printDTensor(outputTensors[i + 1], networkParameters[i + 1], networkBatches, "Output");
     // }
-    
-    for (uint8_t i = networkLayers; i--;) {
-        checkCublasStatus(cublasLtMatmul(
-            ltHandle, InputGradOpDesc,
-            &alpha,
-            weightTensors[i], weightLayouts[i],
-            outputGradTensors[i + 1], outputLayouts[i + 1],
-            &beta,
-            outputGradTensors[i], outputLayouts[i],
-            outputGradTensors[i], outputLayouts[i],
-            &inputGradAlgos[i], NULL, 0, 0));
-            
-        checkCublasStatus(cublasLtMatmul(
-            ltHandle, WeightGradOpDesc,
-            &alpha,
-            outputGradTensors[i + 1], outputLayouts[i + 1],
-            outputTensors[i], outputLayouts[i],
-            &beta,
-            weightGradTensors[i], weightLayouts[i],
-            weightGradTensors[i], weightLayouts[i],
-            &weightGradAlgos[i], NULL, 0, 0));
-    }
-    
-    printDTensor(outputGradTensors[networkLayers], networkParameters[networkLayers], networkBatches, "Output Grad");
-    for (uint8_t i = networkLayers; i--;) {
-        printDTensor(weightGradTensors[i], networkParameters[i + 1], networkParameters[i], "Weight Grad");
-        printDTensor(outputGradTensors[i], networkParameters[i], networkBatches, "Input Grad");
-    }
+        
+    // printDTensor(outputGradTensors[networkLayers], networkParameters[networkLayers], networkBatches, "Output Grad");
+    // for (uint8_t i = networkLayers; i--;) {
+    //     printDTensor(weightGradTensors[i], networkParameters[i + 1], networkParameters[i], "Weight Grad");
+    //     printDTensor(outputGradTensors[i], networkParameters[i], networkBatches, "Input Grad");
+    // }
     
     return 0;
 }
