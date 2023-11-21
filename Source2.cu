@@ -164,7 +164,7 @@ int main() {
     
     printDTensor(dTensorDGrad, dWidth, aHeight, "Output Gradient");
     cublasLtMatmulDesc_t opInputGradDesc;
-    cublasLtEpilogue_t drelu = cublasLtEpilogue_t(8 | 128);// CUBLASLT_EPILOGUE_DRELU;
+    cublasLtEpilogue_t drelu = CUBLASLT_EPILOGUE_BGRADA;// CUBLASLT_EPILOGUE_DRELU;
     cublasOperation_t trans = CUBLAS_OP_T;
     size_t ww = 8;
     checkCublasStatus(cublasLtMatmulDescCreate(&opInputGradDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
