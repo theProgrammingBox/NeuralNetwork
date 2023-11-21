@@ -72,25 +72,36 @@ int main() {
     float *dTensorA, *dTensorB, *dTensorC, *dTensorD;
     checkCudaStatus(cudaMalloc((void **)&dTensorA, dWidth * aWidth * sizeof(float)));
     checkCudaStatus(cudaMalloc((void **)&dTensorB, aWidth * aHeight * sizeof(float)));
-    checkCudaStatus(cudaMalloc((void **)&dTensorC, dWidth * aHeight * sizeof(float)));
+    checkCudaStatus(cudaMalloc((void **)&dTensorC, dWidth * 1 * sizeof(float)));
     checkCudaStatus(cudaMalloc((void **)&dTensorD, dWidth * aHeight * sizeof(float)));
+    
+    float *dTensorDG;
+    checkCudaStatus(cudaMalloc((void **)&dTensorDG, dWidth * aWidth * sizeof(float)));
     
     fillDTensor(dTensorA, dWidth * aWidth, &seed1, &seed2);
     fillDTensor(dTensorB, aWidth * aHeight, &seed1, &seed2);
-    fillDTensor(dTensorC, dWidth * aHeight, &seed1, &seed2);
+    fillDTensor(dTensorC, dWidth * 1, &seed1, &seed2);
+    
+    float hTensorDG[dWidth * aHeight] = {
+        -1, 0,
+        0, -1,
+        1, 1
+    };
+    checkCudaStatus(cudaMemcpy(dTensorDG, hTensorDG, dWidth * aWidth * sizeof(float), cudaMemcpyHostToDevice));
+    printDTensor(dTensorDG, dWidth, aHeight, "Output Gradient");
     
     printDTensor(dTensorA, dWidth, aWidth, "Weight");
     printDTensor(dTensorB, aWidth, aHeight, "Input");
-    printDTensor(dTensorC, dWidth, aHeight, "Bias");
+    printDTensor(dTensorC, dWidth, 1, "Bias");
     
     cublasLtHandle_t ltHandle;
     
     cublasOperation_t transa = CUBLAS_OP_N;
     cublasOperation_t transb = CUBLAS_OP_N;
-    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_BIAS;
+    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_GELU_BIAS;
     
     cublasLtMatmulDesc_t opDesc;
-    cublasLtMatrixLayout_t descA, descB, descC, descD;
+    cublasLtMatrixLayout_t descA, descB, descD;
     
     int returnedResults;
     cublasLtMatmulHeuristicResult_t heuristicResult;
@@ -102,12 +113,11 @@ int main() {
     checkCublasStatus(cublasLtMatmulDescCreate(&opDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa)));
     checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb)));
-    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
-    // checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &dTensorC, sizeof(dTensorC)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(opDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &dTensorC, sizeof(dTensorC)));
     
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descA, CUDA_R_32F, dWidth, aWidth, dWidth));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descB, CUDA_R_32F, aWidth, aHeight, aWidth));
-    // checkCublasStatus(cublasLtMatrixLayoutCreate(&descC, CUDA_R_32F, dWidth, 1, 0));
     checkCublasStatus(cublasLtMatrixLayoutCreate(&descD, CUDA_R_32F, dWidth, aHeight, dWidth));
     
     checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
@@ -131,7 +141,6 @@ int main() {
     checkCublasStatus(cublasLtMatmulPreferenceDestroy(preference));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descA));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descB));
-    // checkCublasStatus(cublasLtMatrixLayoutDestroy(descC));
     checkCublasStatus(cublasLtMatrixLayoutDestroy(descD));
     checkCublasStatus(cublasLtMatmulDescDestroy(opDesc));
     checkCublasStatus(cublasLtDestroy(ltHandle));

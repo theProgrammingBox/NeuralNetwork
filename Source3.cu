@@ -65,21 +65,59 @@ void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *l
 
 int main() {
     const uint8_t networkBatches = 16;
-    const uint8_t networkLayers = 3;
+    const uint8_t networkLayers = 2;
     uint8_t networkParameter[networkLayers + 1] = {2, 8, 1};
-    float* networkWeights[networkLayers];
-    float* networkBiases[networkLayers];
-    float* networkOutputs[networkLayers + 1];
-    
+    float* weightTensors[networkLayers], * outputTensors[networkLayers + 1];
     uint32_t seed1, seed2;
-    initializeSeeds(&seed1, &seed2);
+    cublasLtHandle_t ltHandle;
+    cublasLtMatmulDesc_t OutputOpDesc;
+    cublasLtMatmulPreference_t preference;
+    cublasLtMatrixLayout_t weightLayouts[networkLayers], outputLayouts[networkLayers + 1];
+    cublasLtMatmulAlgo_t algos[networkLayers];
+    cublasLtEpilogue_t reluEp = CUBLASLT_EPILOGUE_RELU;
+    // cublasOperation_t transOp = CUBLAS_OP_T;
     
+    initializeSeeds(&seed1, &seed2);
+    checkCublasStatus(cublasLtCreate(&ltHandle));
+    checkCublasStatus(cublasLtMatmulDescCreate(&OutputOpDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+    checkCublasStatus(cublasLtMatmulPreferenceCreate(&preference));
+    
+    checkCublasStatus(cublasLtMatmulDescSetAttribute(OutputOpDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &reluEp, sizeof(reluEp)));
+    
+    checkCudaStatus(cudaMalloc(&outputTensors[0], networkParameter[0] * networkBatches * sizeof(float)));
+    checkCublasStatus(cublasLtMatrixLayoutCreate(&outputLayouts[0], CUDA_R_32F, networkParameter[0], networkBatches, networkParameter[0]));
     for (uint8_t i = 0; i < networkLayers; i++) {
-        networkWeights[i] = (float *)malloc(networkParameter[i + 1] * networkParameter[i] * sizeof(float));
-        networkBiases[i] = (float *)malloc(networkParameter[i + 1] * sizeof(float));
-        networkOutputs[i] = (float *)malloc(networkBatches * networkParameter[i + 1] * sizeof(float));
-        fillDTensor(networkWeights[i], networkParameter[i] * networkParameter[i + 1], &seed1, &seed2);
-        fillDTensor(networkBiases[i], networkParameter[i + 1], &seed1, &seed2);
+        cublasLtMatmulHeuristicResult_t heuristicResult;
+        int returnedResults;
+        checkCudaStatus(cudaMalloc(&weightTensors[i], networkParameter[i + 1] * networkParameter[i] * sizeof(float)));
+        checkCudaStatus(cudaMalloc(&outputTensors[i + 1], networkParameter[i + 1] * networkBatches * sizeof(float)));
+        checkCublasStatus(cublasLtMatrixLayoutCreate(&weightLayouts[i], CUDA_R_32F, networkParameter[i + 1], networkParameter[i], networkParameter[i + 1]));
+        checkCublasStatus(cublasLtMatrixLayoutCreate(&outputLayouts[i + 1], CUDA_R_32F, networkParameter[i + 1], networkBatches, networkParameter[i + 1]));
+        checkCublasStatus(cublasLtMatmulAlgoGetHeuristic(ltHandle, OutputOpDesc, weightLayouts[i], outputLayouts[i], outputLayouts[i + 1], outputLayouts[i + 1], preference, 1, &heuristicResult, &returnedResults));
+        algos[i] = heuristicResult.algo;
+        
+        fillDTensor(weightTensors[i], networkParameter[i + 1] * networkParameter[i], &seed1, &seed2);
+    }
+    
+    fillDTensor(outputTensors[0], networkParameter[0] * networkBatches, &seed1, &seed2);
+    
+    float alpha = 1.0f, beta = 0.0f;
+    for (uint8_t i = 0; i < networkLayers; i++) {
+        checkCublasStatus(cublasLtMatmul(
+            ltHandle, OutputOpDesc,
+            &alpha,
+            weightTensors[i], weightLayouts[i],
+            outputTensors[i], outputLayouts[i],
+            &beta,
+            outputTensors[i + 1], outputLayouts[i + 1],
+            outputTensors[i + 1], outputLayouts[i + 1],
+            &algos[i], NULL, 0, 0));
+    }
+    
+    printDTensor(outputTensors[0], networkParameter[0], networkBatches, "Input");
+    for (uint8_t i = 0; i < networkLayers; i++) {
+        printDTensor(weightTensors[i], networkParameter[i + 1], networkParameter[i], "Weights");
+        printDTensor(outputTensors[i + 1], networkParameter[i + 1], networkBatches, "Output");
     }
     
     return 0;
