@@ -69,6 +69,19 @@ int compareFloats(const void* a, const void* b) {
   return (fa > fb) - (fa < fb);
 }
 
+__global__ void matrixMul(const float *A, const float *B, float *C, 
+                          int M, int N, int K) {
+    int tx = blockIdx.x * blockDim.x + threadIdx.x;
+    int ty = blockIdx.y * blockDim.y + threadIdx.y;
+    if(ty < M && tx < N) {
+        float c = 0;
+        for(int i = 0; i < K; ++i){
+            c += A[ty * K + i] * B[i * N + tx];
+        }
+        C[ty * N + tx] = c;
+    }
+}
+
 int main() {
   uint32_t seed1, seed2;
   initializeSeeds(&seed1, &seed2);
@@ -101,6 +114,8 @@ int main() {
   
   struct timeval t_start, t_end;
   
+  float mean, median;
+  
   for (uint32_t i = samples; i--;) {
 
     gettimeofday(&t_start, NULL);
@@ -113,6 +128,10 @@ int main() {
       dTensorA, widthA,
       &beta,
       dTensorC, widthC));
+    
+    // dim3 threads(32, 32);
+    // dim3 blocks((widthC + threads.x - 1) / threads.x, (heightA + threads.y - 1) / threads.y);
+    // matrixMul<<<blocks, threads>>>(dTensorA, dTensorB, dTensorC, heightA, widthC, widthA);
       
     gettimeofday(&t_end, NULL);
 
@@ -121,12 +140,46 @@ int main() {
     
   // printDTensor(dTensorC, widthC, heightA, "C");
   
-  float mean = 0.0f;
+  mean = 0.0f;
   for (uint32_t i = samples; i--;) mean += times[i];
   mean /= samples;
   
   qsort(times, samples, sizeof(float), compareFloats);
-  float median = times[samples >> 1];
+  median = times[samples >> 1];
+  
+  printf("Mean: %f ms\n", mean);
+  printf("Median: %f ms\n", median);
+  
+  for (uint32_t i = samples; i--;) {
+
+    gettimeofday(&t_start, NULL);
+  
+    // checkCublasStatus(cublasSgemm(
+    //   handle, CUBLAS_OP_N, CUBLAS_OP_N,
+    //   widthC, heightA, widthA,
+    //   &alpha,
+    //   dTensorB, widthC,
+    //   dTensorA, widthA,
+    //   &beta,
+    //   dTensorC, widthC));
+    
+    dim3 threads(32, 32);
+    dim3 blocks((widthC + threads.x - 1) / threads.x, (heightA + threads.y - 1) / threads.y);
+    matrixMul<<<blocks, threads>>>(dTensorA, dTensorB, dTensorC, heightA, widthC, widthA);
+      
+    gettimeofday(&t_end, NULL);
+
+    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
+  }
+    
+  // printDTensor(dTensorC, widthC, heightA, "C");
+  
+  mean = 0.0f;
+  for (uint32_t i = samples; i--;) mean += times[i];
+  mean /= samples;
+  
+  qsort(times, samples, sizeof(float), compareFloats);
+  median = times[samples >> 1];
   
   printf("Mean: %f ms\n", mean);
   printf("Median: %f ms\n", median);
