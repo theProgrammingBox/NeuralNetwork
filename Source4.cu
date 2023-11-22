@@ -94,19 +94,6 @@ bool areTensorsEqual(float *dTensorA, float *dTensorB, uint32_t size) {
     return hResult;
 }
 
-__global__ void matrixMul(const float *A, const float *B, float *C, 
-                          int M, int N, int K) {
-    int tx = blockIdx.x * blockDim.x + threadIdx.x;
-    int ty = blockIdx.y * blockDim.y + threadIdx.y;
-    if(ty < M && tx < N) {
-        float c = 0;
-        for(int i = 0; i < K; ++i){
-            c += A[ty * K + i] * B[i * N + tx];
-        }
-        C[ty * N + tx] = c;
-    }
-}
-
 template <int BLOCK>
 __global__ void sgemm(int m, int n, int k, float *a, int lda, float *b, int ldb,
                       float *c, int ldc) {
@@ -139,13 +126,64 @@ __global__ void sgemm(int m, int n, int k, float *a, int lda, float *b, int ldb,
   c[(BLOCK * by + ty) * n + BLOCK * bx + tx] = sum;
 }
 
+template <int BLOCK, int STRIDE>
+__global__ void sgemm2(int m, int n, int k, float *a, int lda, float *b, int ldb,
+                      float *c, int ldc) {
+  // blockIdx control subpanel matrix
+  constexpr int STEP = BLOCK * STRIDE;
+  const int tx = threadIdx.x * STRIDE;
+  const int ty = threadIdx.y * STRIDE;
+  const int bx = blockIdx.x * STEP;
+  const int by = blockIdx.y * STEP;
+
+  float *begin_a = a + by * k;
+  float *begin_b = b + bx;
+  float *end_a = begin_a + k;
+
+  float sum[STRIDE][STRIDE] = {0.f};
+
+  __shared__ float ashare[STEP][2 * STEP];
+  __shared__ float bshare[2 * STEP][STEP];
+  // bigger split
+  for (float *a_ptr = begin_a, *b_ptr = begin_b; a_ptr < end_a;
+       a_ptr += 2 * STEP, b_ptr += 2 * STEP * n) {
+
+    for (int i = 0; i < STRIDE; ++i) {
+      for (int j = 0; j < STRIDE; ++j) {
+        ashare[ty + i][tx + j] = a_ptr[(ty + i) * k + tx + j];
+        ashare[ty + i][tx + j + STEP] = a_ptr[(ty + i) * k + tx + j + STEP];
+
+        bshare[ty + i][tx + j] = b_ptr[(ty + i) * n + tx + j];
+        bshare[ty + i + STEP][tx + j] = b_ptr[(ty + i + STEP) * n + tx + j];
+      }
+    }
+    __syncthreads();
+
+    for (int i = 0; i < STRIDE; ++i) {
+      for (int j = 0; j < STRIDE; ++j) {
+        for (int kk = 0; kk < 2 * STEP; ++kk) {
+          sum[i][j] += ashare[ty + i][kk] * bshare[kk][tx + j];
+        }
+      }
+    }
+
+    __syncthreads();
+  }
+
+#pragma unroll
+  for (int i = 0; i < STRIDE; ++i) {
+    for (int j = 0; j < STRIDE; ++j) {
+      c[(by + ty + i) * n + bx + tx + j] = sum[i][j];
+    }
+  }
+}
 
 int main() {
   uint32_t seed1, seed2;
   initializeSeeds(&seed1, &seed2);
 
-  const uint32_t widthA = 1024;
-  const uint32_t heightA = 2048; 
+  const uint32_t widthA = 512;
+  const uint32_t heightA = 1024; 
   const uint32_t widthC = 512;
   
   float *dTensorA, *dTensorB, *dTensorC, *dTensorCCublas;
@@ -164,7 +202,7 @@ int main() {
   // printDTensor(dTensorA, widthA, heightA, "A");
   // printDTensor(dTensorB, widthC, widthA, "B");
   
-  const uint32_t samples = 1024 * 4;
+  const uint32_t samples = 1024 * 8;
   
   float times[samples];
   
@@ -178,9 +216,7 @@ int main() {
   
   
   for (uint32_t i = samples; i--;) {
-
     gettimeofday(&t_start, NULL);
-  
     cublasSgemm(
       handle, CUBLAS_OP_N, CUBLAS_OP_N,
       widthC, heightA, widthA,
@@ -189,75 +225,80 @@ int main() {
       dTensorA, widthA,
       &beta,
       dTensorCCublas, widthC);
-      
     gettimeofday(&t_end, NULL);
-
     times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
   }
-    
   // printDTensor(dTensorCCublas, widthC, heightA, "C");
-  
   mean = 0.0f;
   for (uint32_t i = samples; i--;) mean += times[i];
   mean /= samples;
-  
   qsort(times, samples, sizeof(float), compareFloats);
   median = times[samples >> 1];
-  
   printf("Mean: %f ms\n", mean);
   printf("Median: %f ms\n", median);
   
   
   
+  checkCudaStatus(cudaMemset(dTensorC, 0, heightA * widthC * sizeof(float)));
   for (uint32_t i = samples; i--;) {
-
     gettimeofday(&t_start, NULL);
-    
-    dim3 threads(32, 32);
-    dim3 blocks((widthC + threads.x - 1) / threads.x, (heightA + threads.y - 1) / threads.y);
-    matrixMul<<<blocks, threads>>>(dTensorA, dTensorB, dTensorC, heightA, widthC, widthA);
-      
-    gettimeofday(&t_end, NULL);
-
-    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
-  }
-    
-  areTensorsEqual(dTensorC, dTensorCCublas, heightA * widthC) ? printf("\nTensors are equal\n") : printf("\nTensors are not equal\n");
-  
-  mean = 0.0f;
-  for (uint32_t i = samples; i--;) mean += times[i];
-  mean /= samples;
-  
-  qsort(times, samples, sizeof(float), compareFloats);
-  median = times[samples >> 1];
-  
-  printf("Mean: %f ms\n", mean);
-  printf("Median: %f ms\n", median);
-  
-  
-  
-  for (uint32_t i = samples; i--;) {
-
-    gettimeofday(&t_start, NULL);
-    
     dim3 threads(32, 32);
     dim3 blocks((widthC + threads.x - 1) / threads.x, (heightA + threads.y - 1) / threads.y);
     sgemm<32><<<blocks, threads>>>(heightA, widthC, widthA, dTensorA, widthA, dTensorB, widthC, dTensorC, widthC);
-      
     gettimeofday(&t_end, NULL);
-
     times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
   }
-  
   areTensorsEqual(dTensorC, dTensorCCublas, heightA * widthC) ? printf("\nTensors are equal\n") : printf("\nTensors are not equal\n");
-  
   mean = 0.0f;
   for (uint32_t i = samples; i--;) mean += times[i];
   mean /= samples;
-  
   qsort(times, samples, sizeof(float), compareFloats);
   median = times[samples >> 1];
+  printf("Mean: %f ms\n", mean);
+  printf("Median: %f ms\n", median);
   
+  
+  
+  checkCudaStatus(cudaMemset(dTensorC, 0, heightA * widthC * sizeof(float)));
+  for (uint32_t i = samples; i--;) {
+    gettimeofday(&t_start, NULL);
+    dim3 threads(32, 32);
+    dim3 blocks((widthC + threads.x - 1) / threads.x, (heightA + threads.y - 1) / threads.y);
+    // sgemm2<16, 2><<<blocks, threads>>>(heightA, widthC, widthA, dTensorA, widthA, dTensorB, widthC, dTensorC, widthC);
+    gettimeofday(&t_end, NULL);
+    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
+  }
+  areTensorsEqual(dTensorC, dTensorCCublas, heightA * widthC) ? printf("\nTensors are equal\n") : printf("\nTensors are not equal\n");
+  mean = 0.0f;
+  for (uint32_t i = samples; i--;) mean += times[i];
+  mean /= samples;
+  qsort(times, samples, sizeof(float), compareFloats);
+  median = times[samples >> 1];
+  printf("Mean: %f ms\n", mean);
+  printf("Median: %f ms\n", median);
+  
+  
+  
+  checkCudaStatus(cudaMemset(dTensorC, 0, heightA * widthC * sizeof(float)));
+  for (uint32_t i = samples; i--;) {
+    gettimeofday(&t_start, NULL);
+    cublasSgemm(
+      handle, CUBLAS_OP_N, CUBLAS_OP_N,
+      widthC, heightA, widthA,
+      &alpha,
+      dTensorB, widthC,
+      dTensorA, widthA,
+      &beta,
+      dTensorCCublas, widthC);
+    gettimeofday(&t_end, NULL);
+    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
+  }
+  areTensorsEqual(dTensorC, dTensorCCublas, heightA * widthC) ? printf("\nTensors are equal\n") : printf("\nTensors are not equal\n");
+  mean = 0.0f;
+  for (uint32_t i = samples; i--;) mean += times[i];
+  mean /= samples;
+  qsort(times, samples, sizeof(float), compareFloats);
+  median = times[samples >> 1];
   printf("Mean: %f ms\n", mean);
   printf("Median: %f ms\n", median);
   
