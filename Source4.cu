@@ -11,20 +11,20 @@ struct network {
 void initializeNetwork(network* network0, uint32_t batchSize, uint32_t layers, uint32_t* parameters, uint32_t *seed1, uint32_t *seed2) {
   network0->batchSize = batchSize;
   network0->layers = layers;
-  network0->parameters = (uint32_t*)malloc((network0->layers + 1) * sizeof(uint32_t));
-  memcpy(network0->parameters, parameters, (network0->layers + 1) * sizeof(uint32_t));
+  network0->parameters = (uint32_t*)malloc((network0->layers + 2) * sizeof(uint32_t));
+  memcpy(network0->parameters, parameters, (network0->layers + 2) * sizeof(uint32_t));
   
-  network0->outputs = (float**)malloc((network0->layers + 1) * sizeof(float*));
+  network0->outputs = (float**)malloc((network0->layers + 2) * sizeof(float*));
   
   printf("Initialize network\n");
-  for (uint32_t i = 0; i < network0->layers + 1; i++) {
+  for (uint32_t i = 0; i < network0->layers + 2; i++) {
     checkCudaStatus(cudaMalloc(&network0->outputs[i], network0->parameters[i] * network0->batchSize * sizeof(float)));
     printDTensor(network0->outputs[i], network0->parameters[i], network0->batchSize, "outputs");
   }
   
-  network0->weights = (float**)malloc(network0->layers * sizeof(float*));
+  network0->weights = (float**)malloc((network0->layers + 1) * sizeof(float*));
   
-  for (uint32_t i = 0; i < network0->layers; i++) {
+  for (uint32_t i = 0; i < network0->layers + 1; i++) {
     checkCudaStatus(cudaMalloc(&network0->weights[i], network0->parameters[i + 1] * network0->parameters[i] * sizeof(float)));
     fillDTensor(network0->weights[i], network0->parameters[i + 1] * network0->parameters[i], seed1, seed2);
     printDTensor(network0->weights[i], network0->parameters[i + 1], network0->parameters[i], "weights");
@@ -42,7 +42,13 @@ void feedNetwork(cublasHandle_t *cublasHandle, network* network0, float* inputs)
   for (uint32_t i = 0; i < network0->layers; i++) {
     checkCublasStatus(cublasSgemm(*cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, network0->parameters[i + 1], network0->batchSize, network0->parameters[i], &alpha, network0->weights[i], network0->parameters[i + 1], network0->outputs[i], network0->parameters[i], &beta, network0->outputs[i + 1], network0->parameters[i + 1]));
     printDTensor(network0->outputs[i + 1], network0->parameters[i + 1], network0->batchSize, "outputs");
+    relu(network0->outputs[i + 1], network0->parameters[i + 1] * network0->batchSize);
+    printDTensor(network0->outputs[i + 1], network0->parameters[i + 1], network0->batchSize, "outputs");
   }
+  
+  checkCublasStatus(cublasSgemm(*cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, network0->parameters[network0->layers + 1], network0->batchSize, network0->parameters[network0->layers], &alpha, network0->weights[network0->layers], network0->parameters[network0->layers + 1], network0->outputs[network0->layers], network0->parameters[network0->layers], &beta, network0->outputs[network0->layers + 1], network0->parameters[network0->layers + 1]));
+  printDTensor(network0->outputs[network0->layers + 1], network0->parameters[network0->layers + 1], network0->batchSize, "outputs");
+  
   printf("\n");
 }
 
@@ -71,11 +77,10 @@ int main() {
   
   network network0;
   uint32_t batchSize = 2;
-  uint32_t layers = 2;
-  uint32_t parameters[layers + 1] = {2, 3, 1};
-  initializeNetwork(&network0, batchSize, layers, parameters, &seed1, &seed2);
+  uint32_t parameters[] = {2, 3, 5, 1};
+  initializeNetwork(&network0, batchSize, sizeof(parameters) / sizeof(uint32_t) - 2, parameters, &seed1, &seed2);
   
-  float inputs[batchSize * parameters[0]] = {1.0f, 2.0f, 3.0f, 4.0f};
+  float inputs[parameters[0] * batchSize] = {1.0f, 2.0f, 3.0f, 4.0f};
   feedNetwork(&handle, &network0, inputs);
   
   freeNetwork(&network0);

@@ -62,3 +62,13 @@ void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *l
     printf("\n");
     free(tensor);
 }
+
+__global__ void _relu(float *dTensor, uint32_t size) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    dTensor[idx] = dTensor[idx] > 0 ? dTensor[idx] : 0;
+}
+
+void relu(float *dTensor, uint32_t size) {
+    _relu<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size);
+}
