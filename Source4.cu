@@ -1,313 +1,85 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <sys/time.h>
-#include <cublas_v2.h>
+#include "Header.cuh"
 
-inline void checkCudaStatus(cudaError_t status) {
-    if (status != cudaSuccess) {
-        printf("cuda API failed with status %d: %s\n", status, cudaGetErrorString(status));
-        exit(1);
-    }
-}
+struct network {
+  uint32_t batchSize;
+  uint32_t layers;
+  uint32_t* parameters;
+  float** outputs;
+  float** weights;
+};
 
-inline void checkCublasStatus(cublasStatus_t status) {
-  if (status != CUBLAS_STATUS_SUCCESS) {
-    printf("CuBLAS error: %d\n", status);
-    exit(1);
+void initializeNetwork(network* network0, uint32_t batchSize, uint32_t layers, uint32_t* parameters, uint32_t *seed1, uint32_t *seed2) {
+  network0->batchSize = batchSize;
+  network0->layers = layers;
+  network0->parameters = (uint32_t*)malloc((network0->layers + 1) * sizeof(uint32_t));
+  memcpy(network0->parameters, parameters, (network0->layers + 1) * sizeof(uint32_t));
+  
+  network0->outputs = (float**)malloc((network0->layers + 1) * sizeof(float*));
+  
+  printf("Initialize network\n");
+  for (uint32_t i = 0; i < network0->layers + 1; i++) {
+    checkCudaStatus(cudaMalloc(&network0->outputs[i], network0->parameters[i] * network0->batchSize * sizeof(float)));
+    printDTensor(network0->outputs[i], network0->parameters[i], network0->batchSize, "outputs");
   }
-}
-
-void initializeSeeds(uint32_t *seed1, uint32_t *seed2) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    *seed1 = tv.tv_sec;
-    *seed2 = tv.tv_usec;
-    for (uint8_t i = 8; i--;) {
-        *seed2 *= 0xbf324c81;
-        *seed1 ^= *seed2;
-        *seed1 *= 0x9c7493ad;
-        *seed2 ^= *seed1;
-    }
-}
-
-__global__ void _fillDTensor(float *dTensor, uint32_t size, uint32_t seed1, uint32_t seed2) {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= size) return;
-	seed1 ^= idx;
-    seed1 *= 0x4ba1bb47;
-    seed1 ^= seed2;
-    seed1 *= 0xb7ebcb79;
-    dTensor[idx] = (int32_t)seed1 * 0.0000000004656612875245797f;
-}
-
-void fillDTensor(float *dTensor, uint32_t size, uint32_t *seed1, uint32_t *seed2) {
-    *seed2 *= 0xbf324c81;
-    *seed1 ^= *seed2;
-    *seed1 *= 0x9c7493ad;
-    *seed2 ^= *seed1;
-    _fillDTensor<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size, *seed1, *seed2);
-}
-
-void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *label) {
-    float *tensor = (float *)malloc(width * height * sizeof(float));
-    checkCudaStatus(cudaMemcpy(tensor, dTensor, width * height * sizeof(float), cudaMemcpyDeviceToHost));
-    printf("%s:\n", label);
-    for (uint32_t i = 0; i < height; i++) {
-        for (uint32_t j = 0; j < width; j++) {
-            printf("%f ", tensor[i * width + j]);
-        }
-        printf("\n");
-    }
-    printf("\n");
-    free(tensor);
-}
-
-int compareFloats(const void* a, const void* b) {
-  float fa = *(const float*) a;
-  float fb = *(const float*) b;
-  return (fa > fb) - (fa < fb);
-}
-
-__global__ void compareTensors(const float *tensorA, const float *tensorB, uint32_t size, bool *result) {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= size) return;
-
-    if (fabsf(tensorA[idx] - tensorB[idx]) > 0.001f) {
-        *result = false;
-    }
-}
-
-bool areTensorsEqual(float *dTensorA, float *dTensorB, uint32_t size) {
-    bool *dResult, hResult = true;
-    cudaMalloc(&dResult, sizeof(bool));
-    cudaMemcpy(dResult, &hResult, sizeof(bool), cudaMemcpyHostToDevice);
-
-    uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (size + threadsPerBlock - 1) / threadsPerBlock;
-    
-    compareTensors<<<blocks, threadsPerBlock>>>(dTensorA, dTensorB, size, dResult);
-
-    cudaMemcpy(&hResult, dResult, sizeof(bool), cudaMemcpyDeviceToHost);
-    cudaFree(dResult);
-    
-    return hResult;
-}
-
-template <int BLOCK>
-__global__ void sgemm(int m, int n, int k, float *a, int lda, float *b, int ldb,
-                      float *c, int ldc) {
-  const int tx = threadIdx.x;
-  const int ty = threadIdx.y;
-  const int bx = blockIdx.x;
-  const int by = blockIdx.y;
-
-  float *begin_a = a + by * BLOCK * k;
-  float *begin_b = b + bx * BLOCK;
-  float *end_a = begin_a + k;
-
-  float sum = 0.f;
-  for (float *a_ptr = begin_a, *b_ptr = begin_b; a_ptr < end_a;
-       a_ptr += BLOCK, b_ptr += BLOCK * n) {
-    __shared__ float ashare[BLOCK][BLOCK];
-    __shared__ float bshare[BLOCK][BLOCK];
-
-    ashare[ty][tx] = a_ptr[ty * k + tx];
-    bshare[ty][tx] = b_ptr[ty * n + tx];
-    __syncthreads();
-
-#pragma unroll
-    for (int kk = 0; kk < BLOCK; ++kk) {
-      sum += ashare[ty][kk] * bshare[kk][tx];
-    }
-    __syncthreads();
+  
+  network0->weights = (float**)malloc(network0->layers * sizeof(float*));
+  
+  for (uint32_t i = 0; i < network0->layers; i++) {
+    checkCudaStatus(cudaMalloc(&network0->weights[i], network0->parameters[i + 1] * network0->parameters[i] * sizeof(float)));
+    fillDTensor(network0->weights[i], network0->parameters[i + 1] * network0->parameters[i], seed1, seed2);
+    printDTensor(network0->weights[i], network0->parameters[i + 1], network0->parameters[i], "weights");
   }
-
-  c[(BLOCK * by + ty) * n + BLOCK * bx + tx] = sum;
+  printf("\n");
 }
 
-template <int BLOCK, int STRIDE>
-__global__ void sgemm2(int m, int n, int k, float *a, int lda, float *b, int ldb,
-                      float *c, int ldc) {
-  // blockIdx control subpanel matrix
-  constexpr int STEP = BLOCK * STRIDE;
-  const int tx = threadIdx.x * STRIDE;
-  const int ty = threadIdx.y * STRIDE;
-  const int bx = blockIdx.x * STEP;
-  const int by = blockIdx.y * STEP;
+void feedNetwork(cublasHandle_t *cublasHandle, network* network0, float* inputs) {
+  checkCudaStatus(cudaMemcpy(network0->outputs[0], inputs, network0->parameters[0] * network0->batchSize * sizeof(float), cudaMemcpyHostToDevice));
 
-  float *begin_a = a + by * k;
-  float *begin_b = b + bx;
-  float *end_a = begin_a + k;
-
-  float sum[STRIDE][STRIDE] = {0.f};
-
-  __shared__ float ashare[STEP][2 * STEP];
-  __shared__ float bshare[2 * STEP][STEP];
-  // bigger split
-  for (float *a_ptr = begin_a, *b_ptr = begin_b; a_ptr < end_a;
-       a_ptr += 2 * STEP, b_ptr += 2 * STEP * n) {
-
-    for (int i = 0; i < STRIDE; ++i) {
-      for (int j = 0; j < STRIDE; ++j) {
-        ashare[ty + i][tx + j] = a_ptr[(ty + i) * k + tx + j];
-        ashare[ty + i][tx + j + STEP] = a_ptr[(ty + i) * k + tx + j + STEP];
-
-        bshare[ty + i][tx + j] = b_ptr[(ty + i) * n + tx + j];
-        bshare[ty + i + STEP][tx + j] = b_ptr[(ty + i + STEP) * n + tx + j];
-      }
-    }
-    __syncthreads();
-
-    for (int i = 0; i < STRIDE; ++i) {
-      for (int j = 0; j < STRIDE; ++j) {
-        for (int kk = 0; kk < 2 * STEP; ++kk) {
-          sum[i][j] += ashare[ty + i][kk] * bshare[kk][tx + j];
-        }
-      }
-    }
-
-    __syncthreads();
+  const float alpha = 1.0f;
+  const float beta = 0.0f;
+  printf("Feed forward\n");
+  printDTensor(network0->outputs[0], network0->parameters[0], network0->batchSize, "outputs");
+  for (uint32_t i = 0; i < network0->layers; i++) {
+    checkCublasStatus(cublasSgemm(*cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, network0->parameters[i + 1], network0->batchSize, network0->parameters[i], &alpha, network0->weights[i], network0->parameters[i + 1], network0->outputs[i], network0->parameters[i], &beta, network0->outputs[i + 1], network0->parameters[i + 1]));
+    printDTensor(network0->outputs[i + 1], network0->parameters[i + 1], network0->batchSize, "outputs");
   }
+  printf("\n");
+}
 
-#pragma unroll
-  for (int i = 0; i < STRIDE; ++i) {
-    for (int j = 0; j < STRIDE; ++j) {
-      c[(by + ty + i) * n + bx + tx + j] = sum[i][j];
-    }
-  }
+void freeNetwork(network* network0) {
+  printf("Free network\n");
+  for (uint32_t i = 0; i < network0->layers; i++)
+    checkCudaStatus(cudaFree(network0->weights[i]));
+  
+  free(network0->weights);
+  
+  for (uint32_t i = 0; i < network0->layers + 1; i++)
+    checkCudaStatus(cudaFree(network0->outputs[i]));
+  
+  free(network0->outputs);
+  
+  free(network0->parameters);
 }
 
 int main() {
   uint32_t seed1, seed2;
   initializeSeeds(&seed1, &seed2);
-
-  const uint32_t widthA = 512;
-  const uint32_t heightA = 1024; 
-  const uint32_t widthC = 512;
-  
-  float *dTensorA, *dTensorB, *dTensorC, *dTensorCCublas;
   
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
-
-  cudaMalloc(&dTensorA, widthA * heightA * sizeof(float));
-  cudaMalloc(&dTensorB, widthC * widthA * sizeof(float)); 
-  cudaMalloc(&dTensorC, heightA * widthC * sizeof(float));
-  cudaMalloc(&dTensorCCublas, heightA * widthC * sizeof(float));
-  
-  fillDTensor(dTensorA, widthA * heightA, &seed1, &seed2);
-  fillDTensor(dTensorB, widthC * widthA, &seed1, &seed2);
-  
-  // printDTensor(dTensorA, widthA, heightA, "A");
-  // printDTensor(dTensorB, widthC, widthA, "B");
-  
-  const uint32_t samples = 1024 * 8;
-  
-  float times[samples];
-  
-  const float alpha = 1.0f;
-  const float beta = 0.0f;
-  
-  struct timeval t_start, t_end;
-  
-  float mean, median;
   
   
+  network network0;
+  uint32_t batchSize = 2;
+  uint32_t layers = 2;
+  uint32_t parameters[layers + 1] = {2, 3, 1};
+  initializeNetwork(&network0, batchSize, layers, parameters, &seed1, &seed2);
   
-  for (uint32_t i = samples; i--;) {
-    gettimeofday(&t_start, NULL);
-    cublasSgemm(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N,
-      widthC, heightA, widthA,
-      &alpha,
-      dTensorB, widthC,
-      dTensorA, widthA,
-      &beta,
-      dTensorCCublas, widthC);
-    gettimeofday(&t_end, NULL);
-    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
-  }
-  // printDTensor(dTensorCCublas, widthC, heightA, "C");
-  mean = 0.0f;
-  for (uint32_t i = samples; i--;) mean += times[i];
-  mean /= samples;
-  qsort(times, samples, sizeof(float), compareFloats);
-  median = times[samples >> 1];
-  printf("Mean: %f ms\n", mean);
-  printf("Median: %f ms\n", median);
+  float inputs[batchSize * parameters[0]] = {1.0f, 2.0f, 3.0f, 4.0f};
+  feedNetwork(&handle, &network0, inputs);
   
+  freeNetwork(&network0);
   
-  
-  checkCudaStatus(cudaMemset(dTensorC, 0, heightA * widthC * sizeof(float)));
-  for (uint32_t i = samples; i--;) {
-    gettimeofday(&t_start, NULL);
-    dim3 threads(32, 32);
-    dim3 blocks((widthC + threads.x - 1) / threads.x, (heightA + threads.y - 1) / threads.y);
-    sgemm<32><<<blocks, threads>>>(heightA, widthC, widthA, dTensorA, widthA, dTensorB, widthC, dTensorC, widthC);
-    gettimeofday(&t_end, NULL);
-    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
-  }
-  areTensorsEqual(dTensorC, dTensorCCublas, heightA * widthC) ? printf("\nTensors are equal\n") : printf("\nTensors are not equal\n");
-  mean = 0.0f;
-  for (uint32_t i = samples; i--;) mean += times[i];
-  mean /= samples;
-  qsort(times, samples, sizeof(float), compareFloats);
-  median = times[samples >> 1];
-  printf("Mean: %f ms\n", mean);
-  printf("Median: %f ms\n", median);
-  
-  
-  
-  checkCudaStatus(cudaMemset(dTensorC, 0, heightA * widthC * sizeof(float)));
-  for (uint32_t i = samples; i--;) {
-    gettimeofday(&t_start, NULL);
-    dim3 threads(32, 32);
-    dim3 blocks((widthC + threads.x - 1) / threads.x, (heightA + threads.y - 1) / threads.y);
-    // sgemm2<16, 2><<<blocks, threads>>>(heightA, widthC, widthA, dTensorA, widthA, dTensorB, widthC, dTensorC, widthC);
-    gettimeofday(&t_end, NULL);
-    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
-  }
-  areTensorsEqual(dTensorC, dTensorCCublas, heightA * widthC) ? printf("\nTensors are equal\n") : printf("\nTensors are not equal\n");
-  mean = 0.0f;
-  for (uint32_t i = samples; i--;) mean += times[i];
-  mean /= samples;
-  qsort(times, samples, sizeof(float), compareFloats);
-  median = times[samples >> 1];
-  printf("Mean: %f ms\n", mean);
-  printf("Median: %f ms\n", median);
-  
-  
-  
-  checkCudaStatus(cudaMemset(dTensorC, 0, heightA * widthC * sizeof(float)));
-  for (uint32_t i = samples; i--;) {
-    gettimeofday(&t_start, NULL);
-    cublasSgemm(
-      handle, CUBLAS_OP_N, CUBLAS_OP_N,
-      widthC, heightA, widthA,
-      &alpha,
-      dTensorB, widthC,
-      dTensorA, widthA,
-      &beta,
-      dTensorCCublas, widthC);
-    gettimeofday(&t_end, NULL);
-    times[i] = (t_end.tv_sec - t_start.tv_sec) * 1000.0f + (t_end.tv_usec - t_start.tv_usec) / 1000.0f;
-  }
-  areTensorsEqual(dTensorC, dTensorCCublas, heightA * widthC) ? printf("\nTensors are equal\n") : printf("\nTensors are not equal\n");
-  mean = 0.0f;
-  for (uint32_t i = samples; i--;) mean += times[i];
-  mean /= samples;
-  qsort(times, samples, sizeof(float), compareFloats);
-  median = times[samples >> 1];
-  printf("Mean: %f ms\n", mean);
-  printf("Median: %f ms\n", median);
-  
-  
-  
-  cudaFree(dTensorA);
-  cudaFree(dTensorB);
-  cudaFree(dTensorC);
-  cudaFree(dTensorCCublas);
   
   checkCublasStatus(cublasDestroy(handle));
 
