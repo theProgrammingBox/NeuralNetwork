@@ -10,173 +10,200 @@ struct network {
   float** weightGradients;
 };
 
-void initializeNetwork(network* network0, uint32_t batchSize, uint32_t layers, uint32_t* parameters, uint32_t *seed1, uint32_t *seed2, bool debug = false) {
-  network0->batchSize = batchSize;
-  network0->layers = layers;
-  network0->parameters = (uint32_t*)malloc((network0->layers + 2) * sizeof(uint32_t));
-  memcpy(network0->parameters, parameters, (network0->layers + 2) * sizeof(uint32_t));
+void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t layers, const uint32_t* parameters, uint32_t *seed1, uint32_t *seed2, bool debug = false) {
+  net->batchSize = batchSize;
+  net->layers = layers;
+  net->parameters = (uint32_t*)malloc((net->layers + 2) * sizeof(uint32_t));
+  memcpy(net->parameters, parameters, (net->layers + 2) * sizeof(uint32_t));
   
-  network0->outputs = (float**)malloc((network0->layers + 2) * sizeof(float*));
-  network0->outputGradients = (float**)malloc((network0->layers + 2) * sizeof(float*));
+  net->outputs = (float**)malloc((net->layers + 2) * sizeof(float*));
+  net->outputGradients = (float**)malloc((net->layers + 2) * sizeof(float*));
   
   if (debug) printf("Initialize network:\n");
-  for (uint32_t i = 0; i < network0->layers + 2; i++) {
-    checkCudaStatus(cudaMalloc(&network0->outputs[i], network0->parameters[i] * network0->batchSize * sizeof(float)));
-    if (debug) printDTensor(network0->outputs[i], network0->parameters[i], network0->batchSize, "output");
+  for (uint32_t i = 0; i < net->layers + 2; i++) {
+    checkCudaStatus(cudaMalloc(&net->outputs[i], net->parameters[i] * net->batchSize * sizeof(float)));
+    if (debug) printDTensor(net->outputs[i], net->parameters[i], net->batchSize, "output");
     
-    checkCudaStatus(cudaMalloc(&network0->outputGradients[i], network0->parameters[i] * network0->batchSize * sizeof(float)));
-    if (debug) printDTensor(network0->outputGradients[i], network0->parameters[i], network0->batchSize, "output gradient");
+    checkCudaStatus(cudaMalloc(&net->outputGradients[i], net->parameters[i] * net->batchSize * sizeof(float)));
+    if (debug) printDTensor(net->outputGradients[i], net->parameters[i], net->batchSize, "output gradient");
   }
   
-  network0->weights = (float**)malloc((network0->layers + 1) * sizeof(float*));
-  network0->weightGradients = (float**)malloc((network0->layers + 1) * sizeof(float*));
+  net->weights = (float**)malloc((net->layers + 1) * sizeof(float*));
+  net->weightGradients = (float**)malloc((net->layers + 1) * sizeof(float*));
   
-  for (uint32_t i = 0; i < network0->layers + 1; i++) {
-    checkCudaStatus(cudaMalloc(&network0->weights[i], network0->parameters[i + 1] * network0->parameters[i] * sizeof(float)));
-    fillDTensor(network0->weights[i], network0->parameters[i + 1] * network0->parameters[i], seed1, seed2);
-    if (debug) printDTensor(network0->weights[i], network0->parameters[i + 1], network0->parameters[i], "weight");
+  for (uint32_t i = 0; i < net->layers + 1; i++) {
+    checkCudaStatus(cudaMalloc(&net->weights[i], net->parameters[i + 1] * net->parameters[i] * sizeof(float)));
+    fillDTensor(net->weights[i], net->parameters[i + 1] * net->parameters[i], seed1, seed2);
+    if (debug) printDTensor(net->weights[i], net->parameters[i + 1], net->parameters[i], "weight");
     
-    checkCudaStatus(cudaMalloc(&network0->weightGradients[i], network0->parameters[i + 1] * network0->parameters[i] * sizeof(float)));
-    if (debug) printDTensor(network0->weightGradients[i], network0->parameters[i + 1], network0->parameters[i], "weight gradient");
+    checkCudaStatus(cudaMalloc(&net->weightGradients[i], net->parameters[i + 1] * net->parameters[i] * sizeof(float)));
+    if (debug) printDTensor(net->weightGradients[i], net->parameters[i + 1], net->parameters[i], "weight gradient");
   }
   if (debug) printf("\n");
 }
 
-void forwardPropagate(cublasHandle_t *cublasHandle, network* network0, float* input, bool debug = false) {
-  checkCudaStatus(cudaMemcpy(network0->outputs[0], input, network0->parameters[0] * network0->batchSize * sizeof(float), cudaMemcpyHostToDevice));
+void randomInput(network* net, uint32_t *seed1, uint32_t *seed2) {
+    fillDTensor(net->outputs[0], net->parameters[0] * net->batchSize, seed1, seed2);
+}
 
-  const float one = 1.0f;
+void setInputs(network* net, float* inputs, bool host = true) {
+  checkCudaStatus(cudaMemcpy(net->outputs[0], inputs, net->parameters[0] * net->batchSize * sizeof(float), host ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice));
+}
+
+void forwardPropagate(cublasHandle_t *cublasHandle, network* net, bool debug = false) {
   const float zero = 0.0f;
   if (debug) printf("Forward propagation:\n");
-  if (debug) printDTensor(network0->outputs[0], network0->parameters[0], network0->batchSize, "input");
+  if (debug) printDTensor(net->outputs[0], net->parameters[0], net->batchSize, "input");
   
-  for (uint32_t i = 0; i < network0->layers; i++) {
+  for (uint32_t i = 0; i < net->layers; i++) {
+    float alpha = 2.0f / sqrtf(net->parameters[i]);
     checkCublasStatus(cublasSgemm(
       *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
-      network0->parameters[i + 1], network0->batchSize, network0->parameters[i],
-      &one,
-      network0->weights[i], network0->parameters[i + 1],
-      network0->outputs[i], network0->parameters[i],
+      net->parameters[i + 1], net->batchSize, net->parameters[i],
+      &alpha,
+      net->weights[i], net->parameters[i + 1],
+      net->outputs[i], net->parameters[i],
       &zero,
-      network0->outputs[i + 1], network0->parameters[i + 1]));
-    if (debug) printDTensor(network0->outputs[i + 1], network0->parameters[i + 1], network0->batchSize, "sum");
+      net->outputs[i + 1], net->parameters[i + 1]));
+    if (debug) printDTensor(net->outputs[i + 1], net->parameters[i + 1], net->batchSize, "sum");
     
-    reluForward(network0->outputs[i + 1], network0->parameters[i + 1] * network0->batchSize);
-    if (debug) printDTensor(network0->outputs[i + 1], network0->parameters[i + 1], network0->batchSize, "relu");
+    reluForward(net->outputs[i + 1], net->parameters[i + 1] * net->batchSize);
+    if (debug) printDTensor(net->outputs[i + 1], net->parameters[i + 1], net->batchSize, "relu");
   }
   
+  float alpha = 2.0f / sqrtf(net->parameters[net->layers]);
   checkCublasStatus(cublasSgemm(
     *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
-    network0->parameters[network0->layers + 1], network0->batchSize, network0->parameters[network0->layers],
-    &one,
-    network0->weights[network0->layers], network0->parameters[network0->layers + 1],
-    network0->outputs[network0->layers], network0->parameters[network0->layers],
+    net->parameters[net->layers + 1], net->batchSize, net->parameters[net->layers],
+    &alpha,
+    net->weights[net->layers], net->parameters[net->layers + 1],
+    net->outputs[net->layers], net->parameters[net->layers],
     &zero,
-    network0->outputs[network0->layers + 1], network0->parameters[network0->layers + 1]));
-  if (debug) printDTensor(network0->outputs[network0->layers + 1], network0->parameters[network0->layers + 1], network0->batchSize, "output");
+    net->outputs[net->layers + 1], net->parameters[net->layers + 1]));
+  if (debug) printDTensor(net->outputs[net->layers + 1], net->parameters[net->layers + 1], net->batchSize, "output");
   
   if (debug) printf("\n");
 }
 
-void backPropagate(cublasHandle_t *cublasHandle, network* network0, float* target, bool errorPrint = false, bool debug = false) {
-  checkCudaStatus(cudaMemcpy(network0->outputGradients[network0->layers + 1], target, network0->parameters[network0->layers + 1] * network0->batchSize * sizeof(float), cudaMemcpyHostToDevice));
+void targetOutput(cublasHandle_t *cublasHandle, network* net, float* target, bool debug = false) {
+  checkCudaStatus(cudaMemcpy(net->outputGradients[net->layers + 1], target, net->parameters[net->layers + 1] * net->batchSize * sizeof(float), cudaMemcpyHostToDevice));
   const float negativeOne = -1.0f;
   checkCublasStatus(cublasSaxpy(
     *cublasHandle,
-    network0->parameters[network0->layers + 1] * network0->batchSize,
+    net->parameters[net->layers + 1] * net->batchSize,
     &negativeOne,
-    network0->outputs[network0->layers + 1], 1,
-    network0->outputGradients[network0->layers + 1], 1));
-  if (debug) printDTensor(network0->outputGradients[network0->layers + 1], network0->parameters[network0->layers + 1], network0->batchSize, "output gradient");
-  
+    net->outputs[net->layers + 1], 1,
+    net->outputGradients[net->layers + 1], 1));
+  if (debug) printDTensor(net->outputGradients[net->layers + 1], net->parameters[net->layers + 1], net->batchSize, "output gradient");
+}
+
+void setOutputGradients(network* net, float* gradients, bool host = true) {
+  checkCudaStatus(cudaMemcpy(net->outputGradients[net->layers + 1], gradients, net->parameters[net->layers + 1] * net->batchSize * sizeof(float), host ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice));
+}
+
+void backPropagate(cublasHandle_t *cublasHandle, network* net, float* target, bool errorPrint = false, bool debug = false) {
   if (errorPrint) {
     float error = 0.0f;
     checkCublasStatus(cublasSasum(
       *cublasHandle,
-      network0->parameters[network0->layers + 1] * network0->batchSize,
-      network0->outputGradients[network0->layers + 1], 1,
+      net->parameters[net->layers + 1] * net->batchSize,
+      net->outputGradients[net->layers + 1], 1,
       &error));
-    printf("Error: %f\n", error / network0->batchSize);
+    printf("Error: %f\n", error / net->batchSize);
   }
   
-  const float one = 1.0f;
   const float zero = 0.0f;
   if (debug) printf("Back propagation:\n");
   
+  float alpha = 2.0f / sqrtf(net->batchSize);
   checkCublasStatus(cublasSgemm(
     *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T,
-    network0->parameters[network0->layers + 1], network0->parameters[network0->layers], network0->batchSize,
-    &one,
-    network0->outputGradients[network0->layers + 1], network0->parameters[network0->layers + 1],
-    network0->outputs[network0->layers], network0->parameters[network0->layers],
+    net->parameters[net->layers + 1], net->parameters[net->layers], net->batchSize,
+    &alpha,
+    net->outputGradients[net->layers + 1], net->parameters[net->layers + 1],
+    net->outputs[net->layers], net->parameters[net->layers],
     &zero,
-    network0->weightGradients[network0->layers], network0->parameters[network0->layers + 1]));
-  if (debug) printDTensor(network0->weightGradients[network0->layers], network0->parameters[network0->layers + 1], network0->parameters[network0->layers], "weight gradient");
+    net->weightGradients[net->layers], net->parameters[net->layers + 1]));
+  if (debug) printDTensor(net->weightGradients[net->layers], net->parameters[net->layers + 1], net->parameters[net->layers], "weight gradient");
   
+  float beta = 2.0f / sqrtf(net->parameters[net->layers + 1]);
   checkCublasStatus(cublasSgemm(
     *cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N,
-    network0->parameters[network0->layers], network0->batchSize, network0->parameters[network0->layers + 1],
-    &one,
-    network0->weights[network0->layers], network0->parameters[network0->layers + 1],
-    network0->outputGradients[network0->layers + 1], network0->parameters[network0->layers + 1],
+    net->parameters[net->layers], net->batchSize, net->parameters[net->layers + 1],
+    &beta,
+    net->weights[net->layers], net->parameters[net->layers + 1],
+    net->outputGradients[net->layers + 1], net->parameters[net->layers + 1],
     &zero,
-    network0->outputGradients[network0->layers], network0->parameters[network0->layers]));
-  if (debug) printDTensor(network0->outputGradients[network0->layers], network0->parameters[network0->layers], network0->batchSize, "output gradient");
+    net->outputGradients[net->layers], net->parameters[net->layers]));
+  if (debug) printDTensor(net->outputGradients[net->layers], net->parameters[net->layers], net->batchSize, "output gradient");
   
-  for (uint32_t i = network0->layers; i > 0; i--) {
-    reluBackward(network0->outputs[i], network0->outputGradients[i], network0->parameters[i] * network0->batchSize);
-    if (debug) printDTensor(network0->outputGradients[i], network0->parameters[i], network0->batchSize, "relu gradient");
+  for (uint32_t i = net->layers; i > 0; i--) {
+    reluBackward(net->outputs[i], net->outputGradients[i], net->parameters[i] * net->batchSize);
+    if (debug) printDTensor(net->outputGradients[i], net->parameters[i], net->batchSize, "relu gradient");
     
+    alpha = 2.0f / sqrtf(net->batchSize);
     checkCublasStatus(cublasSgemm(
       *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T,
-      network0->parameters[i], network0->parameters[i - 1], network0->batchSize,
-      &one,
-      network0->outputGradients[i], network0->parameters[i],
-      network0->outputs[i - 1], network0->parameters[i - 1],
+      net->parameters[i], net->parameters[i - 1], net->batchSize,
+      &alpha,
+      net->outputGradients[i], net->parameters[i],
+      net->outputs[i - 1], net->parameters[i - 1],
       &zero,
-      network0->weightGradients[i - 1], network0->parameters[i]));
-    if (debug) printDTensor(network0->weightGradients[i - 1], network0->parameters[i], network0->parameters[i - 1], "weight gradient");
+      net->weightGradients[i - 1], net->parameters[i]));
+    if (debug) printDTensor(net->weightGradients[i - 1], net->parameters[i], net->parameters[i - 1], "weight gradient");
     
+    beta = 2.0f / sqrtf(net->parameters[i]);
     checkCublasStatus(cublasSgemm(
       *cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N,
-      network0->parameters[i - 1], network0->batchSize, network0->parameters[i],
-      &one,
-      network0->weights[i - 1], network0->parameters[i],
-      network0->outputGradients[i], network0->parameters[i],
+      net->parameters[i - 1], net->batchSize, net->parameters[i],
+      &beta,
+      net->weights[i - 1], net->parameters[i],
+      net->outputGradients[i], net->parameters[i],
       &zero,
-      network0->outputGradients[i - 1], network0->parameters[i - 1]));
-    if (debug) printDTensor(network0->outputGradients[i - 1], network0->parameters[i - 1], network0->batchSize, "output gradient");
+      net->outputGradients[i - 1], net->parameters[i - 1]));
+    if (debug) printDTensor(net->outputGradients[i - 1], net->parameters[i - 1], net->batchSize, "output gradient");
   }
   if (debug) printf("\n");
 }
 
-void updateWeights(cublasHandle_t *cublasHandle, network* network0, float learningRate, bool debug = false) {
+void updateWeights(cublasHandle_t *cublasHandle, network* net, float learningRate, bool debug = false) {
   if (debug) printf("Update weights:\n");
-  for (uint32_t i = 0; i < network0->layers + 1; i++) {
+  for (uint32_t i = 0; i < net->layers + 1; i++) {
     checkCublasStatus(cublasSaxpy(
       *cublasHandle,
-      network0->parameters[i + 1] * network0->parameters[i],
+      net->parameters[i + 1] * net->parameters[i],
       &learningRate,
-      network0->weightGradients[i], 1,
-      network0->weights[i], 1));
-    if (debug) printDTensor(network0->weights[i], network0->parameters[i + 1], network0->parameters[i], "weight");
+      net->weightGradients[i], 1,
+      net->weights[i], 1));
+    if (debug) printDTensor(net->weights[i], net->parameters[i + 1], net->parameters[i], "weight");
   }
   if (debug) printf("\n");
 }
 
-void freeNetwork(network* network0, bool debug = false) {
+void freeNetwork(network* net, bool debug = false) {
   if (debug) printf("Free network\n");
-  for (uint32_t i = 0; i < network0->layers; i++)
-    checkCudaStatus(cudaFree(network0->weights[i]));
+  for (uint32_t i = 0; i < net->layers; i++)
+    checkCudaStatus(cudaFree(net->weights[i]));
   
-  free(network0->weights);
+  free(net->weights);
   
-  for (uint32_t i = 0; i < network0->layers + 1; i++)
-    checkCudaStatus(cudaFree(network0->outputs[i]));
+  for (uint32_t i = 0; i < net->layers + 1; i++)
+    checkCudaStatus(cudaFree(net->outputs[i]));
   
-  free(network0->outputs);
+  free(net->outputs);
   
-  free(network0->parameters);
+  free(net->parameters);
+}
+
+struct player {
+  uint32_t idx;
+  int32_t score;
+};
+
+int comparePlayers(const void *a, const void *b) {
+  player *playerA = (player *)a;
+  player *playerB = (player *)b;
+  return playerA->score - playerB->score;
 }
 
 int main() {
@@ -187,33 +214,75 @@ int main() {
   checkCublasStatus(cublasCreate(&handle));
   
   const float learningRate = 0.1f;
-  const uint32_t epochs = 100;
+  const uint32_t epochs = 1;
+  const uint32_t batchSize = 64;
   
   
-  network network0;
-  uint32_t batchSize = 8;
-  uint32_t parameters[] = {2, 3, 1};
-  uint32_t layers = sizeof(parameters) / sizeof(uint32_t) - 2;
-  initializeNetwork(&network0, batchSize, layers, parameters, &seed1, &seed2);
+  network policy;
+  const uint32_t policyParameters[] = {8, 32, 32, 32, 3};
+  const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
+  initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
-  float input[parameters[0] * batchSize];
-  float target[parameters[layers + 1] * batchSize];
+  network value;
+  const uint32_t valueParameters[] = {3, 32, 32, 32, 1};
+  const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
+  initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
+  
+  float policyOutput[policyParameters[policyLayers + 1] * batchSize];
+  float valueTarget[policyParameters[policyLayers + 1] * batchSize];
+  uint32_t actions[batchSize];
+  const uint32_t samples = 32;
+  const int outcomes[9] = {
+    0, -1,  1,
+    1,  0, -1,
+    -1,  1,  0
+  };
+  
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
-    for (uint32_t batch = 0; batch < batchSize; batch++) {
-      uint8_t a = rand() % 2;
-      uint8_t b = rand() % 2;
-      uint8_t c = a ^ b;
-      input[batch * parameters[0] + 0] = a;
-      input[batch * parameters[0] + 1] = b;
-      target[batch * parameters[layers + 1] + 0] = c;
+    randomInput(&policy, &seed1, &seed2);
+    forwardPropagate(&handle, &policy);
     
+    setInputs(&value, policy.outputs[policyLayers + 1], false);
+    forwardPropagate(&handle, &value);
+    
+    checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    for (uint32_t batch = 0; batch < batchSize; batch++) {
+      uint32_t action = 0;
+      float max = policyOutput[batch * policyParameters[policyLayers + 1]];
+      for (uint32_t i = 1; i < policyParameters[policyLayers + 1]; i++) {
+        if (policyOutput[batch * policyParameters[policyLayers + 1] + i] > max) {
+          max = policyOutput[batch * policyParameters[policyLayers + 1] + i];
+          action = i;
+        }
+      }
+      actions[batch] = action;
+      printf("Action: %u\n", action);
+      printDTensor(&value.outputs[valueLayers + 1][batch * valueParameters[valueLayers + 1]], valueParameters[valueLayers + 1], 1, "value");
     }
     
-    forwardPropagate(&handle, &network0, input);
-    backPropagate(&handle, &network0, target, epoch % 10 == 0);
-    updateWeights(&handle, &network0, learningRate);
+    player players[batchSize];
+    for (uint32_t batch = 0; batch < batchSize; batch++) {
+      int32_t score = 0;
+      uint32_t action = actions[batch];
+      for (uint32_t sample = 0; sample < samples; sample++) {
+        mixSeed(&seed1, &seed2);
+        uint32_t opponentAction = actions[seed1 % batchSize];
+        score += outcomes[action * 3 + opponentAction];
+      }
+      
+      players[batch].idx = batch;
+      players[batch].score = score;
+    }
+    
+    qsort(players, batchSize, sizeof(player), comparePlayers);
+    for (uint32_t batch = 0; batch < batchSize; batch++) {
+      printf("Player %u: Score: %d, Action: %u, Rank: %f\n", players[batch].idx, players[batch].score, actions[players[batch].idx], (float)batch / (batchSize - 1));
+    }
+    
+    // backPropagate(&handle, &policy, target, epoch % 10 == 0);
+    // updateWeights(&handle, &policy, learningRate);
   }
-  freeNetwork(&network0);
+  freeNetwork(&policy);
   
   
   checkCublasStatus(cublasDestroy(handle));
