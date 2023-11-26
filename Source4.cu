@@ -187,6 +187,7 @@ int main() {
   checkCublasStatus(cublasCreate(&handle));
   
   const float learningRate = 0.1f;
+  const uint32_t epochs = 100;
   
   
   network network0;
@@ -197,18 +198,19 @@ int main() {
   
   float input[parameters[0] * batchSize];
   float target[parameters[layers + 1] * batchSize];
-  for (uint32_t i = 100; i--;) {
-    for (uint32_t j = batchSize; j--;) {
+  for (uint32_t epoch = 0; epoch < epochs; epoch++) {
+    for (uint32_t batch = 0; batch < batchSize; batch++) {
       uint8_t a = rand() % 2;
       uint8_t b = rand() % 2;
       uint8_t c = a ^ b;
-      input[j * 2 + 0] = a;
-      input[j * 2 + 1] = b;
-      target[j] = c;
+      input[batch * parameters[0] + 0] = a;
+      input[batch * parameters[0] + 1] = b;
+      target[batch * parameters[layers + 1] + 0] = c;
+    
     }
     
     forwardPropagate(&handle, &network0, input);
-    backPropagate(&handle, &network0, target, i % 10 == 0);
+    backPropagate(&handle, &network0, target, epoch % 10 == 0);
     updateWeights(&handle, &network0, learningRate);
   }
   freeNetwork(&network0);
