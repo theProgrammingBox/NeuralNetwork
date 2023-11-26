@@ -63,12 +63,22 @@ void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *l
     free(tensor);
 }
 
-__global__ void _relu(float *dTensor, uint32_t size) {
+__global__ void _reluForward(float *dTensor, uint32_t size) {
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
     dTensor[idx] = dTensor[idx] > 0 ? dTensor[idx] : 0;
 }
 
-void relu(float *dTensor, uint32_t size) {
-    _relu<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size);
+void reluForward(float *dTensor, uint32_t size) {
+    _reluForward<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size);
+}
+
+__global__ void _reluBackward(float *dTensor, float *dTensorGrad, uint32_t size) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    dTensorGrad[idx] = dTensor[idx] > 0 ? dTensorGrad[idx] : 0;
+}
+
+void reluBackward(float *dTensor, float *dTensorGrad, uint32_t size) {
+    _reluBackward<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, dTensorGrad, size);
 }
