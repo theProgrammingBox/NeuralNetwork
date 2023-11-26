@@ -42,11 +42,11 @@ void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t la
   if (debug) printf("\n");
 }
 
-void randomInput(network* net, uint32_t *seed1, uint32_t *seed2) {
+void setRandomInput(network* net, uint32_t *seed1, uint32_t *seed2) {
     fillDTensor(net->outputs[0], net->parameters[0] * net->batchSize, seed1, seed2);
 }
 
-void setInputs(network* net, float* inputs, bool host = true) {
+void setInput(network* net, float* inputs, bool host = true) {
   checkCudaStatus(cudaMemcpy(net->outputs[0], inputs, net->parameters[0] * net->batchSize * sizeof(float), host ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice));
 }
 
@@ -85,7 +85,7 @@ void forwardPropagate(cublasHandle_t *cublasHandle, network* net, bool debug = f
   if (debug) printf("\n");
 }
 
-void targetOutput(cublasHandle_t *cublasHandle, network* net, float* target, bool debug = false) {
+void setOutputTarget(cublasHandle_t *cublasHandle, network* net, float* target, bool debug = false) {
   checkCudaStatus(cudaMemcpy(net->outputGradients[net->layers + 1], target, net->parameters[net->layers + 1] * net->batchSize * sizeof(float), cudaMemcpyHostToDevice));
   const float negativeOne = -1.0f;
   checkCublasStatus(cublasSaxpy(
@@ -101,7 +101,7 @@ void setOutputGradients(network* net, float* gradients, bool host = true) {
   checkCudaStatus(cudaMemcpy(net->outputGradients[net->layers + 1], gradients, net->parameters[net->layers + 1] * net->batchSize * sizeof(float), host ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice));
 }
 
-void backPropagate(cublasHandle_t *cublasHandle, network* net, float* target, bool errorPrint = false, bool debug = false) {
+void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint = false, bool debug = false) {
   if (errorPrint) {
     float error = 0.0f;
     checkCublasStatus(cublasSasum(
@@ -213,25 +213,26 @@ int main() {
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
   
-  const float learningRate = 0.1f;
-  const uint32_t epochs = 1;
-  const uint32_t batchSize = 64;
+  const float learningRate = 0.001f;
+  const uint32_t epochs = 100;
+  const uint32_t batchSize = 1024;
   
   
   network policy;
-  const uint32_t policyParameters[] = {8, 32, 32, 32, 3};
+  const uint32_t policyParameters[] = {8, 16, 16, 3};
   const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {3, 32, 32, 32, 1};
+  const uint32_t valueParameters[] = {3, 16, 16, 16, 16, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
   float policyOutput[policyParameters[policyLayers + 1] * batchSize];
   float valueTarget[policyParameters[policyLayers + 1] * batchSize];
+  float valueGradient[policyParameters[policyLayers + 1] * batchSize];
   uint32_t actions[batchSize];
-  const uint32_t samples = 32;
+  const uint32_t samples = 64;
   const int outcomes[9] = {
     0, -1,  1,
     1,  0, -1,
@@ -239,10 +240,10 @@ int main() {
   };
   
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
-    randomInput(&policy, &seed1, &seed2);
+    setRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
     
-    setInputs(&value, policy.outputs[policyLayers + 1], false);
+    setInput(&value, policy.outputs[policyLayers + 1], false);
     forwardPropagate(&handle, &value);
     
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
@@ -256,8 +257,6 @@ int main() {
         }
       }
       actions[batch] = action;
-      printf("Action: %u\n", action);
-      printDTensor(&value.outputs[valueLayers + 1][batch * valueParameters[valueLayers + 1]], valueParameters[valueLayers + 1], 1, "value");
     }
     
     player players[batchSize];
@@ -276,13 +275,24 @@ int main() {
     
     qsort(players, batchSize, sizeof(player), comparePlayers);
     for (uint32_t batch = 0; batch < batchSize; batch++) {
-      printf("Player %u: Score: %d, Action: %u, Rank: %f\n", players[batch].idx, players[batch].score, actions[players[batch].idx], (float)batch / (batchSize - 1));
+      valueTarget[players[batch].idx * valueParameters[valueLayers + 1]] = (float)batch / (batchSize - 1);
     }
     
-    // backPropagate(&handle, &policy, target, epoch % 10 == 0);
-    // updateWeights(&handle, &policy, learningRate);
+    setOutputTarget(&handle, &value, valueTarget);
+    backPropagate(&handle, &value, epoch % 100 == 0);
+    updateWeights(&handle, &value, learningRate);
+    
+    for (uint32_t batch = 0; batch < batchSize; batch++) {
+      valueGradient[players[batch].idx * valueParameters[valueLayers + 1]] = 1.0f;
+    }
+    setOutputGradients(&value, valueGradient);
+    backPropagate(&handle, &value);
+    setOutputGradients(&policy, value.outputGradients[0], false);
+    backPropagate(&handle, &policy);
+    updateWeights(&handle, &policy, learningRate);
   }
   freeNetwork(&policy);
+  freeNetwork(&value);
   
   
   checkCublasStatus(cublasDestroy(handle));
