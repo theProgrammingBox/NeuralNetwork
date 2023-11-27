@@ -115,6 +115,8 @@ void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint =
   const float zero = 0.0f;
   if (debug) printf("Back propagation:\n");
   
+  if (debug) printDTensor(net->outputGradients[net->layers + 1], net->parameters[net->layers + 1], net->batchSize, "output gradient");
+  
   float alpha = 2.0f / sqrtf(net->batchSize);
   checkCublasStatus(cublasSgemm(
     *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T,
@@ -213,8 +215,9 @@ int main() {
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
   
-  const float learningRate = 0.001f;
-  const uint32_t epochs = 100;
+  const float policyLearningRate = 0.00001f;
+  const float valueLearningRate = 0.001f;
+  const uint32_t epochs = 10000;
   const uint32_t batchSize = 1024;
   
   
@@ -280,16 +283,19 @@ int main() {
     
     setOutputTarget(&handle, &value, valueTarget);
     backPropagate(&handle, &value, epoch % 100 == 0);
-    updateWeights(&handle, &value, learningRate);
+    // print output gradient 0 layer
+    if (epoch == epochs - 1)
+      printDTensor(value.outputGradients[0], valueParameters[valueLayers + 1], batchSize, "output gradient");
+    updateWeights(&handle, &value, valueLearningRate);
     
-    for (uint32_t batch = 0; batch < batchSize; batch++) {
-      valueGradient[players[batch].idx * valueParameters[valueLayers + 1]] = 1.0f;
-    }
-    setOutputGradients(&value, valueGradient);
-    backPropagate(&handle, &value);
-    setOutputGradients(&policy, value.outputGradients[0], false);
-    backPropagate(&handle, &policy);
-    updateWeights(&handle, &policy, learningRate);
+    // for (uint32_t batch = 0; batch < batchSize; batch++) {
+    //   valueGradient[players[batch].idx * valueParameters[valueLayers + 1]] = 1.0f;
+    // }
+    // setOutputGradients(&value, valueGradient);
+    // backPropagate(&handle, &value);
+    // setOutputGradients(&policy, value.outputGradients[0], false);
+    // backPropagate(&handle, &policy);
+    // updateWeights(&handle, &policy, policyLearningRate);
   }
   freeNetwork(&policy);
   freeNetwork(&value);
