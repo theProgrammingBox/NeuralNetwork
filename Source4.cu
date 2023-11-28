@@ -222,12 +222,12 @@ int main() {
   
   
   network policy;
-  const uint32_t policyParameters[] = {8, 16, 16, 3};
+  const uint32_t policyParameters[] = {8, 16, 16, 1};
   const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {3, 16, 16, 16, 16, 1};
+  const uint32_t valueParameters[] = {1, 16, 16, 16, 16, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
@@ -245,20 +245,35 @@ int main() {
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
     setRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
+    // print output last layer
+    // if (epoch == epochs - 1)
+      // printDTensor(policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1], batchSize, "output");
     
     setInput(&value, policy.outputs[policyLayers + 1], false);
     forwardPropagate(&handle, &value);
     
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     for (uint32_t batch = 0; batch < batchSize; batch++) {
+      // uint32_t action = 0;
+      // float max = policyOutput[batch * policyParameters[policyLayers + 1]];
+      // for (uint32_t i = 1; i < policyParameters[policyLayers + 1]; i++) {
+      //   if (policyOutput[batch * policyParameters[policyLayers + 1] + i] > max) {
+      //     max = policyOutput[batch * policyParameters[policyLayers + 1] + i];
+      //     action = i;
+      //   }
+      // }
+      
+      // 0 if < -0.2, 1 if < 0.2, 2 otherwise
       uint32_t action = 0;
-      float max = policyOutput[batch * policyParameters[policyLayers + 1]];
-      for (uint32_t i = 1; i < policyParameters[policyLayers + 1]; i++) {
-        if (policyOutput[batch * policyParameters[policyLayers + 1] + i] > max) {
-          max = policyOutput[batch * policyParameters[policyLayers + 1] + i];
-          action = i;
-        }
-      }
+      if (policyOutput[batch * policyParameters[policyLayers + 1]] < -0.2f)
+        action = 0;
+      else if (policyOutput[batch * policyParameters[policyLayers + 1]] < 0.2f)
+        action = 1;
+      else
+        action = 2;
+      // print float value
+      // printDTensor(policy.outputs[policyLayers + 1] + batch * policyParameters[policyLayers + 1], policyParameters[policyLayers + 1], 1, "output");
+      // printf("%d\n", action);
       actions[batch] = action;
     }
     
@@ -281,11 +296,34 @@ int main() {
       valueTarget[players[batch].idx * valueParameters[valueLayers + 1]] = (float)batch / (batchSize - 1);
     }
     
+    if (epoch == epochs - 1) {
+      // print each action and score
+      float avg[3] = {0.0f, 0.0f, 0.0f};
+      uint32_t count[3] = {0, 0, 0};
+      for (uint32_t batch = 0; batch < batchSize; batch++) {
+        float placement = (float)batch / (batchSize - 1);
+        // printf("%d %d %f\n", actions[players[batch].idx], players[batch].score, placement);
+        avg[actions[players[batch].idx]] += placement;
+        count[actions[players[batch].idx]]++;
+      }
+      
+      printf("avg: %f %f %f\n", avg[0] / count[0], avg[1] / count[1], avg[2] / count[2]);
+      // calc error given you know the outcome
+      float errorKnown[3] = {0.0f, 0.0f, 0.0f};
+      for (uint32_t batch = 0; batch < batchSize; batch++) {
+        float placement = (float)batch / (batchSize - 1);
+        errorKnown[actions[players[batch].idx]] += fabs(placement - avg[actions[players[batch].idx]] / count[actions[players[batch].idx]]);
+      }
+      
+      printf("error known: %f %f %f\n", errorKnown[0] / count[0], errorKnown[1] / count[1], errorKnown[2] / count[2]);
+    
+      // print first 3 value input and output
+      printDTensor(value.outputs[0], valueParameters[0], 6, "input");
+      printDTensor(value.outputs[valueLayers + 1], valueParameters[valueLayers + 1], 6, "output");
+    }
+    
     setOutputTarget(&handle, &value, valueTarget);
     backPropagate(&handle, &value, epoch % 100 == 0);
-    // print output gradient 0 layer
-    if (epoch == epochs - 1)
-      printDTensor(value.outputGradients[0], valueParameters[valueLayers + 1], batchSize, "output gradient");
     updateWeights(&handle, &value, valueLearningRate);
     
     // for (uint32_t batch = 0; batch < batchSize; batch++) {
@@ -293,6 +331,9 @@ int main() {
     // }
     // setOutputGradients(&value, valueGradient);
     // backPropagate(&handle, &value);
+    // // print output gradient 0 layer
+    // if (epoch == epochs - 1)
+    //   printDTensor(value.outputGradients[0], valueParameters[valueLayers + 1], batchSize, "output gradient");
     // setOutputGradients(&policy, value.outputGradients[0], false);
     // backPropagate(&handle, &policy);
     // updateWeights(&handle, &policy, policyLearningRate);
