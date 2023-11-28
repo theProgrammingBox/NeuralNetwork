@@ -46,6 +46,10 @@ void setRandomInput(network* net, uint32_t *seed1, uint32_t *seed2) {
     fillDTensor(net->outputs[0], net->parameters[0] * net->batchSize, seed1, seed2);
 }
 
+void setCustomRandomInput(network* net, uint32_t *seed1, uint32_t *seed2) {
+  customFillDTensor(net->outputs[0], net->parameters[0] * net->batchSize, seed1, seed2);
+}
+
 void setInput(network* net, float* inputs, bool host = true) {
   checkCudaStatus(cudaMemcpy(net->outputs[0], inputs, net->parameters[0] * net->batchSize * sizeof(float), host ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice));
 }
@@ -235,7 +239,7 @@ int main() {
   float valueTarget[policyParameters[policyLayers + 1] * batchSize];
   float valueGradient[policyParameters[policyLayers + 1] * batchSize];
   uint32_t actions[batchSize];
-  const uint32_t samples = 64;
+  const uint32_t samples = 1024;
   const int outcomes[9] = {
     0, -1,  1,
     1,  0, -1,
@@ -243,7 +247,8 @@ int main() {
   };
   
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
-    setRandomInput(&policy, &seed1, &seed2);
+    // setRandomInput(&policy, &seed1, &seed2);
+    setCustomRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
     // print output last layer
     // if (epoch == epochs - 1)
@@ -296,10 +301,10 @@ int main() {
       valueTarget[players[batch].idx * valueParameters[valueLayers + 1]] = (float)batch / (batchSize - 1);
     }
     
-    if (epoch == epochs - 1) {
+    uint32_t count[3] = {0, 0, 0};
+    if (epoch % 100 == 0) {
       // print each action and score
       float avg[3] = {0.0f, 0.0f, 0.0f};
-      uint32_t count[3] = {0, 0, 0};
       for (uint32_t batch = 0; batch < batchSize; batch++) {
         float placement = (float)batch / (batchSize - 1);
         // printf("%d %d %f\n", actions[players[batch].idx], players[batch].score, placement);
@@ -307,7 +312,7 @@ int main() {
         count[actions[players[batch].idx]]++;
       }
       
-      printf("avg: %f %f %f\n", avg[0] / count[0], avg[1] / count[1], avg[2] / count[2]);
+      // printf("avg: %f %f %f\n", avg[0] / count[0], avg[1] / count[1], avg[2] / count[2]);
       // calc error given you know the outcome
       float errorKnown[3] = {0.0f, 0.0f, 0.0f};
       for (uint32_t batch = 0; batch < batchSize; batch++) {
@@ -315,15 +320,40 @@ int main() {
         errorKnown[actions[players[batch].idx]] += fabs(placement - avg[actions[players[batch].idx]] / count[actions[players[batch].idx]]);
       }
       
-      printf("error known: %f %f %f\n", errorKnown[0] / count[0], errorKnown[1] / count[1], errorKnown[2] / count[2]);
+      // printf("error known: %f %f %f\n", errorKnown[0] / count[0], errorKnown[1] / count[1], errorKnown[2] / count[2]);
+      
+      // print lowest error possible
+      // printf("error lowest: %f\n", (errorKnown[0] / count[0] * count[0] + errorKnown[1] / count[1] * count[1] + errorKnown[2] / count[2] * count[2]) / batchSize);
     
-      // print first 3 value input and output
-      printDTensor(value.outputs[0], valueParameters[0], 6, "input");
-      printDTensor(value.outputs[valueLayers + 1], valueParameters[valueLayers + 1], 6, "output");
+      // print first 6 value input and output
+      // printDTensor(value.outputs[0], valueParameters[0], 6, "input");
+      // printDTensor(value.outputs[valueLayers + 1], valueParameters[valueLayers + 1], 6, "output");
     }
     
     setOutputTarget(&handle, &value, valueTarget);
+    // if (epoch == epochs - 1) {
+      // // print target
+      // printf("target:\n");
+      // for (uint32_t batch = 0; batch < 6; batch++) {
+      //   printf("%f\n", valueTarget[batch * valueParameters[valueLayers + 1]]);
+      // }
+      // printf("\n");
+    // }
+    // backPropagate(&handle, &value);
     backPropagate(&handle, &value, epoch % 100 == 0);
+    if (epoch % 100 == 0) {
+      // print outputgradient last layer
+      // printDTensor(value.outputGradients[valueLayers + 1], valueParameters[valueLayers + 1], 6, "output gradient");
+      
+      // print average outputgradient error per action
+      float gradErrAvg[3] = {0.0f, 0.0f, 0.0f};
+      float *gradErr = (float*)malloc(valueParameters[valueLayers + 1] * batchSize * sizeof(float));
+      checkCudaStatus(cudaMemcpy(gradErr, value.outputGradients[valueLayers + 1], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+      for (uint32_t batch = 0; batch < batchSize; batch++) {
+        gradErrAvg[actions[players[batch].idx]] += gradErr[players[batch].idx];
+      }
+      printf("grad err avg: %f %f %f\n", gradErrAvg[0] / count[0], gradErrAvg[1] / count[1], gradErrAvg[2] / count[2]);
+    }
     updateWeights(&handle, &value, valueLearningRate);
     
     // for (uint32_t batch = 0; batch < batchSize; batch++) {
