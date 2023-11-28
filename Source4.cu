@@ -220,7 +220,7 @@ int main() {
   checkCublasStatus(cublasCreate(&handle));
   
   const float policyLearningRate = 0.00001f;
-  const float valueLearningRate = 0.001f;
+  const float valueLearningRate = 0.01f;
   const uint32_t epochs = 10000;
   const uint32_t batchSize = 1024;
   

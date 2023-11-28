@@ -51,8 +51,8 @@ void fillDTensor(float *dTensor, uint32_t size, uint32_t *seed1, uint32_t *seed2
 __global__ void _customFillDTensor(float *dTensor, uint32_t size, uint32_t seed1, uint32_t seed2) {
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
-    if (idx == 0) {
-        dTensor[idx] = 0.1f;
+    if (idx <= 0) {
+        dTensor[idx] = 1.0f;
         return;
     }
 	seed1 ^= idx ^ 0x9c7493ad;
