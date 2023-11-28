@@ -212,6 +212,10 @@ int comparePlayers(const void *a, const void *b) {
   return playerA->score - playerB->score;
 }
 
+/*
+- adam
+*/
+
 int main() {
   uint32_t seed1, seed2;
   initializeSeeds(&seed1, &seed2);
@@ -220,18 +224,18 @@ int main() {
   checkCublasStatus(cublasCreate(&handle));
   
   const float policyLearningRate = 0.00001f;
-  const float valueLearningRate = 0.01f;
+  const float valueLearningRate = 0.001f;
   const uint32_t epochs = 10000;
   const uint32_t batchSize = 1024;
   
   
   network policy;
-  const uint32_t policyParameters[] = {8, 16, 16, 1};
+  const uint32_t policyParameters[] = {2, 8, 8, 1};
   const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {1, 16, 16, 16, 16, 1};
+  const uint32_t valueParameters[] = {1, 16, 16, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
