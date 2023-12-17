@@ -244,13 +244,17 @@ int main() {
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
     setRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
-    // get and print histogram of outputs from -1 to 1 using 10 bins
+    // get and print histogram of outputs from -4 to 4 using 100 bins
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policy.layers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
-    uint32_t histogram[10] = {0};
-    for (uint32_t i = 0; i < policyParameters[policyLayers + 1] * batchSize; i++)
-      histogram[(uint32_t)((policyOutput[i] + 1.0f) * 5.0f)]++;
-    printf("Epoch %d: ", epoch);
-    for (uint32_t i = 0; i < 10; i++)
+    uint32_t histogram[100];
+    memset(histogram, 0, 100 * sizeof(uint32_t));
+    for (uint32_t i = 0; i < policyParameters[policyLayers + 1] * batchSize; i++) {
+      uint32_t index = (uint32_t)((policyOutput[i] + 4.0f) / 8.0f * 100.0f);
+      if (index >= 100) index = 99;
+      histogram[index]++;
+    }
+    printf("Epoch %d:\n", epoch);
+    for (uint32_t i = 10; i < 90; i++)
       printf("%d ", histogram[i]);
     printf("\n");
   }
