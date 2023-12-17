@@ -60,7 +60,8 @@ void forwardPropagate(cublasHandle_t *cublasHandle, network* net, bool debug = f
   if (debug) printDTensor(net->outputs[0], net->parameters[0], net->batchSize, "input");
   
   for (uint32_t i = 0; i < net->layers; i++) {
-    float alpha = 2.0f / sqrtf(net->parameters[i]);
+    // float alpha = 2.0f / sqrtf(net->parameters[i]);
+    float alpha = 1.0f;
     checkCublasStatus(cublasSgemm(
       *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
       net->parameters[i + 1], net->batchSize, net->parameters[i],
@@ -75,7 +76,8 @@ void forwardPropagate(cublasHandle_t *cublasHandle, network* net, bool debug = f
     if (debug) printDTensor(net->outputs[i + 1], net->parameters[i + 1], net->batchSize, "relu");
   }
   
-  float alpha = 2.0f / sqrtf(net->parameters[net->layers]);
+  // float alpha = 2.0f / sqrtf(net->parameters[net->layers]);
+  float alpha = 1.0f;
   checkCublasStatus(cublasSgemm(
     *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,
     net->parameters[net->layers + 1], net->batchSize, net->parameters[net->layers],
@@ -121,7 +123,8 @@ void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint =
   
   if (debug) printDTensor(net->outputGradients[net->layers + 1], net->parameters[net->layers + 1], net->batchSize, "output gradient");
   
-  float alpha = 2.0f / sqrtf(net->batchSize);
+  // float alpha = 2.0f / sqrtf(net->batchSize);
+  float alpha = 1.0f;
   checkCublasStatus(cublasSgemm(
     *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T,
     net->parameters[net->layers + 1], net->parameters[net->layers], net->batchSize,
@@ -132,7 +135,8 @@ void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint =
     net->weightGradients[net->layers], net->parameters[net->layers + 1]));
   if (debug) printDTensor(net->weightGradients[net->layers], net->parameters[net->layers + 1], net->parameters[net->layers], "weight gradient");
   
-  float beta = 2.0f / sqrtf(net->parameters[net->layers + 1]);
+  // float beta = 2.0f / sqrtf(net->parameters[net->layers + 1]);
+  float beta = 1.0f;
   checkCublasStatus(cublasSgemm(
     *cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N,
     net->parameters[net->layers], net->batchSize, net->parameters[net->layers + 1],
@@ -147,7 +151,8 @@ void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint =
     reluBackward(net->outputs[i], net->outputGradients[i], net->parameters[i] * net->batchSize);
     if (debug) printDTensor(net->outputGradients[i], net->parameters[i], net->batchSize, "relu gradient");
     
-    alpha = 2.0f / sqrtf(net->batchSize);
+    // alpha = 2.0f / sqrtf(net->batchSize);
+    alpha = 1.0f;
     checkCublasStatus(cublasSgemm(
       *cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T,
       net->parameters[i], net->parameters[i - 1], net->batchSize,
@@ -158,7 +163,8 @@ void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint =
       net->weightGradients[i - 1], net->parameters[i]));
     if (debug) printDTensor(net->weightGradients[i - 1], net->parameters[i], net->parameters[i - 1], "weight gradient");
     
-    beta = 2.0f / sqrtf(net->parameters[i]);
+    // beta = 2.0f / sqrtf(net->parameters[i]);
+    beta = 1.0f;
     checkCublasStatus(cublasSgemm(
       *cublasHandle, CUBLAS_OP_T, CUBLAS_OP_N,
       net->parameters[i - 1], net->batchSize, net->parameters[i],
@@ -201,21 +207,6 @@ void freeNetwork(network* net, bool debug = false) {
   free(net->parameters);
 }
 
-struct player {
-  uint32_t idx;
-  int32_t score;
-};
-
-int comparePlayers(const void *a, const void *b) {
-  player *playerA = (player *)a;
-  player *playerB = (player *)b;
-  return playerA->score - playerB->score;
-}
-
-/*
-- adam
-*/
-
 int main() {
   uint32_t seed1, seed2;
   initializeSeeds(&seed1, &seed2);
@@ -225,7 +216,7 @@ int main() {
   
   const float policyLearningRate = 0.00001f;
   const float valueLearningRate = 0.001f;
-  const uint32_t epochs = 10000;
+  const uint32_t epochs = 10;
   const uint32_t batchSize = 1024;
   
   
@@ -251,126 +242,17 @@ int main() {
   };
   
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
-    // setRandomInput(&policy, &seed1, &seed2);
-    setCustomRandomInput(&policy, &seed1, &seed2);
+    setRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
-    // print output last layer
-    // if (epoch == epochs - 1)
-      // printDTensor(policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1], batchSize, "output");
-    
-    setInput(&value, policy.outputs[policyLayers + 1], false);
-    forwardPropagate(&handle, &value);
-    
-    checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
-    for (uint32_t batch = 0; batch < batchSize; batch++) {
-      // uint32_t action = 0;
-      // float max = policyOutput[batch * policyParameters[policyLayers + 1]];
-      // for (uint32_t i = 1; i < policyParameters[policyLayers + 1]; i++) {
-      //   if (policyOutput[batch * policyParameters[policyLayers + 1] + i] > max) {
-      //     max = policyOutput[batch * policyParameters[policyLayers + 1] + i];
-      //     action = i;
-      //   }
-      // }
-      
-      // 0 if < -0.2, 1 if < 0.2, 2 otherwise
-      uint32_t action = 0;
-      if (policyOutput[batch * policyParameters[policyLayers + 1]] < -0.2f)
-        action = 0;
-      else if (policyOutput[batch * policyParameters[policyLayers + 1]] < 0.2f)
-        action = 1;
-      else
-        action = 2;
-      // print float value
-      // printDTensor(policy.outputs[policyLayers + 1] + batch * policyParameters[policyLayers + 1], policyParameters[policyLayers + 1], 1, "output");
-      // printf("%d\n", action);
-      actions[batch] = action;
-    }
-    
-    player players[batchSize];
-    for (uint32_t batch = 0; batch < batchSize; batch++) {
-      int32_t score = 0;
-      uint32_t action = actions[batch];
-      for (uint32_t sample = 0; sample < samples; sample++) {
-        mixSeed(&seed1, &seed2);
-        uint32_t opponentAction = actions[seed1 % batchSize];
-        score += outcomes[action * 3 + opponentAction];
-      }
-      
-      players[batch].idx = batch;
-      players[batch].score = score;
-    }
-    
-    qsort(players, batchSize, sizeof(player), comparePlayers);
-    for (uint32_t batch = 0; batch < batchSize; batch++) {
-      valueTarget[players[batch].idx * valueParameters[valueLayers + 1]] = (float)batch / (batchSize - 1);
-    }
-    
-    uint32_t count[3] = {0, 0, 0};
-    if (epoch % 100 == 0) {
-      // print each action and score
-      float avg[3] = {0.0f, 0.0f, 0.0f};
-      for (uint32_t batch = 0; batch < batchSize; batch++) {
-        float placement = (float)batch / (batchSize - 1);
-        // printf("%d %d %f\n", actions[players[batch].idx], players[batch].score, placement);
-        avg[actions[players[batch].idx]] += placement;
-        count[actions[players[batch].idx]]++;
-      }
-      
-      // printf("avg: %f %f %f\n", avg[0] / count[0], avg[1] / count[1], avg[2] / count[2]);
-      // calc error given you know the outcome
-      float errorKnown[3] = {0.0f, 0.0f, 0.0f};
-      for (uint32_t batch = 0; batch < batchSize; batch++) {
-        float placement = (float)batch / (batchSize - 1);
-        errorKnown[actions[players[batch].idx]] += fabs(placement - avg[actions[players[batch].idx]] / count[actions[players[batch].idx]]);
-      }
-      
-      // printf("error known: %f %f %f\n", errorKnown[0] / count[0], errorKnown[1] / count[1], errorKnown[2] / count[2]);
-      
-      // print lowest error possible
-      // printf("error lowest: %f\n", (errorKnown[0] / count[0] * count[0] + errorKnown[1] / count[1] * count[1] + errorKnown[2] / count[2] * count[2]) / batchSize);
-    
-      // print first 6 value input and output
-      // printDTensor(value.outputs[0], valueParameters[0], 6, "input");
-      // printDTensor(value.outputs[valueLayers + 1], valueParameters[valueLayers + 1], 6, "output");
-    }
-    
-    setOutputTarget(&handle, &value, valueTarget);
-    // if (epoch == epochs - 1) {
-      // // print target
-      // printf("target:\n");
-      // for (uint32_t batch = 0; batch < 6; batch++) {
-      //   printf("%f\n", valueTarget[batch * valueParameters[valueLayers + 1]]);
-      // }
-      // printf("\n");
-    // }
-    // backPropagate(&handle, &value);
-    backPropagate(&handle, &value, epoch % 100 == 0);
-    if (epoch % 100 == 0) {
-      // print outputgradient last layer
-      // printDTensor(value.outputGradients[valueLayers + 1], valueParameters[valueLayers + 1], 6, "output gradient");
-      
-      // print average outputgradient error per action
-      float gradErrAvg[3] = {0.0f, 0.0f, 0.0f};
-      float *gradErr = (float*)malloc(valueParameters[valueLayers + 1] * batchSize * sizeof(float));
-      checkCudaStatus(cudaMemcpy(gradErr, value.outputGradients[valueLayers + 1], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
-      for (uint32_t batch = 0; batch < batchSize; batch++) {
-        gradErrAvg[actions[players[batch].idx]] += gradErr[players[batch].idx];
-      }
-      printf("grad err avg: %f %f %f\n", gradErrAvg[0] / count[0], gradErrAvg[1] / count[1], gradErrAvg[2] / count[2]);
-    }
-    updateWeights(&handle, &value, valueLearningRate);
-    
-    // for (uint32_t batch = 0; batch < batchSize; batch++) {
-    //   valueGradient[players[batch].idx * valueParameters[valueLayers + 1]] = 1.0f;
-    // }
-    // setOutputGradients(&value, valueGradient);
-    // backPropagate(&handle, &value);
-    // // print output gradient 0 layer
-    // if (epoch == epochs - 1)
-    //   printDTensor(value.outputGradients[0], valueParameters[valueLayers + 1], batchSize, "output gradient");
-    // setOutputGradients(&policy, value.outputGradients[0], false);
-    // backPropagate(&handle, &policy);
-    // updateWeights(&handle, &policy, policyLearningRate);
+    // get and print histogram of outputs from -1 to 1 using 10 bins
+    checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policy.layers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    uint32_t histogram[10] = {0};
+    for (uint32_t i = 0; i < policyParameters[policyLayers + 1] * batchSize; i++)
+      histogram[(uint32_t)((policyOutput[i] + 1.0f) * 5.0f)]++;
+    printf("Epoch %d: ", epoch);
+    for (uint32_t i = 0; i < 10; i++)
+      printf("%d ", histogram[i]);
+    printf("\n");
   }
   freeNetwork(&policy);
   freeNetwork(&value);
