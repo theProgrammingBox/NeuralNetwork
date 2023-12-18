@@ -19,9 +19,12 @@ TASKS
 --- do not update policy network with value network gradients to see it it can normalize full picture
 - simulate rps to see if it can handle basic changing strategies
 -- maybe see oscillating strategies. see if stagnates due to the nature of nn or value function failure
+- add cuda memset for 0s called zero
 */
 
 struct network {
+  float meanCorrection;
+  float varianceCorrection;
   uint32_t batchSize;
   uint32_t layers;
   uint32_t* parameters;
@@ -29,6 +32,8 @@ struct network {
   float** weights;
   float** outputGradients;
   float** weightGradients;
+  float** weightGradientsMean;
+  float** weightGradientsVariance;
 };
 
 void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t layers, const uint32_t* parameters, uint32_t *seed1, uint32_t *seed2, bool debug = false) {
@@ -36,6 +41,9 @@ void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t la
   net->layers = layers;
   net->parameters = (uint32_t*)malloc((net->layers + 2) * sizeof(uint32_t));
   memcpy(net->parameters, parameters, (net->layers + 2) * sizeof(uint32_t));
+  
+  net->meanCorrection = 1.0f;
+  net->varianceCorrection = 1.0f;
   
   net->outputs = (float**)malloc((net->layers + 2) * sizeof(float*));
   net->outputGradients = (float**)malloc((net->layers + 2) * sizeof(float*));
@@ -51,6 +59,8 @@ void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t la
   
   net->weights = (float**)malloc((net->layers + 1) * sizeof(float*));
   net->weightGradients = (float**)malloc((net->layers + 1) * sizeof(float*));
+  net->weightGradientsMean = (float**)malloc((net->layers + 1) * sizeof(float*));
+  net->weightGradientsVariance = (float**)malloc((net->layers + 1) * sizeof(float*));
   
   for (uint32_t i = 0; i < net->layers + 1; i++) {
     checkCudaStatus(cudaMalloc(&net->weights[i], net->parameters[i + 1] * net->parameters[i] * sizeof(float)));
@@ -59,6 +69,14 @@ void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t la
     
     checkCudaStatus(cudaMalloc(&net->weightGradients[i], net->parameters[i + 1] * net->parameters[i] * sizeof(float)));
     if (debug) printDTensor(net->weightGradients[i], net->parameters[i + 1], net->parameters[i], "weight gradient");
+    
+    checkCudaStatus(cudaMalloc(&net->weightGradientsMean[i], net->parameters[i + 1] * net->parameters[i] * sizeof(float)));
+    customFillDTensorConstant(net->weightGradientsMean[i], net->parameters[i + 1] * net->parameters[i], 0.0f);
+    if (debug) printDTensor(net->weightGradientsMean[i], net->parameters[i + 1], net->parameters[i], "weight gradient mean");
+    
+    checkCudaStatus(cudaMalloc(&net->weightGradientsVariance[i], net->parameters[i + 1] * net->parameters[i] * sizeof(float)));
+    customFillDTensorConstant(net->weightGradientsVariance[i], net->parameters[i + 1] * net->parameters[i], 0.0f);
+    if (debug) printDTensor(net->weightGradientsVariance[i], net->parameters[i + 1], net->parameters[i], "weight gradient variance");
   }
   if (debug) printf("\n");
 }
@@ -203,15 +221,12 @@ void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint =
   if (debug) printf("\n");
 }
 
-void updateWeights(cublasHandle_t *cublasHandle, network* net, float learningRate, bool debug = false) {
+void updateWeights(cublasHandle_t *cublasHandle, network* net, float betaMean, float betaVar, float learningRate, bool debug = false) {
   if (debug) printf("Update weights:\n");
+  net->meanCorrection *= betaMean;
+  net->varianceCorrection *= betaVar;
   for (uint32_t i = 0; i < net->layers + 1; i++) {
-    checkCublasStatus(cublasSaxpy(
-      *cublasHandle,
-      net->parameters[i + 1] * net->parameters[i],
-      &learningRate,
-      net->weightGradients[i], 1,
-      net->weights[i], 1));
+    integratedAdamUpdate(net->weights[i], net->weightGradients[i], net->weightGradientsMean[i], net->weightGradientsVariance[i], betaMean, betaVar, net->meanCorrection, net->varianceCorrection, learningRate, net->parameters[i + 1] * net->parameters[i]);
     if (debug) printDTensor(net->weights[i], net->parameters[i + 1], net->parameters[i], "weight");
   }
   if (debug) printf("\n");
@@ -239,6 +254,8 @@ int main() {
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
   
+  const float meanBeta = 0.9f;
+  const float varianceBeta = 0.999f;
   const float policyLearningRate = 0.000001f;
   const float valueLearningRate = 0.0001f;
   const uint32_t epochs = 4096 * 8;
@@ -286,14 +303,14 @@ int main() {
     forwardPropagate(&handle, &value);
     setOutputTarget(&handle, &value, valueTarget);
     backPropagate(&handle, &value, epoch % 100 == 0);
-    updateWeights(&handle, &value, valueLearningRate);
+    updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate);
     
     if (epoch >= 1024) {
       setOutputGradientsToConstant(&value, 1.0f);
       backPropagate(&handle, &value);
       setOutputGradients(&policy, value.outputGradients[0], false);
       backPropagate(&handle, &policy);
-      updateWeights(&handle, &policy, policyLearningRate);
+      updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate);
     }
   }
   printf("\n");

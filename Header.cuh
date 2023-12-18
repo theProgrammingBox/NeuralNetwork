@@ -87,6 +87,23 @@ void customFillDTensorConstant(float *dTensor, uint32_t size, float constant) {
     _customFillDTensorConstant<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size, constant);
 }
 
+__global__ void _integratedAdamUpdate(float *dTensor, float *dTensorGrad, float *dTensorMean, float *dTensorVar, float betaMean, float betaVar, float betaMeanCor, float betaVarCor, float learningRate, uint32_t size) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    float grad = dTensorGrad[idx];
+    float mean = betaMean * dTensorMean[idx] + (1.0f - betaMean) * grad;
+    float var = betaVar * dTensorVar[idx] + (1.0f - betaVar) * grad * grad;
+    float meanCor = mean / (1.0f - betaMeanCor);
+    float varCor = var / (1.0f - betaVarCor);
+    dTensorMean[idx] = mean;
+    dTensorVar[idx] = var;
+    dTensor[idx] += learningRate * meanCor / (sqrtf(varCor) + 1e-8f);
+}
+
+void integratedAdamUpdate(float *dTensor, float *dTensorGrad, float *dTensorMean, float *dTensorVar, float betaMean, float betaVar, float betaMeanCor, float betaVarCor, float learningRate, uint32_t size) {
+    _integratedAdamUpdate<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, dTensorGrad, dTensorMean, dTensorVar, betaMean, betaVar, betaMeanCor, betaVarCor, learningRate, size);
+}
+
 void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *label) {
     float *tensor = (float *)malloc(width * height * sizeof(float));
     checkCudaStatus(cudaMemcpy(tensor, dTensor, width * height * sizeof(float), cudaMemcpyDeviceToHost));
