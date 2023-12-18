@@ -216,17 +216,17 @@ int main() {
   
   const float policyLearningRate = 0.00001f;
   const float valueLearningRate = 0.001f;
-  const uint32_t epochs = 10;
-  const uint32_t batchSize = 1024;
+  const uint32_t epochs = 1000;
+  const uint32_t batchSize = 256;
   
   
   network policy;
-  const uint32_t policyParameters[] = {2, 8, 8, 1};
+  const uint32_t policyParameters[] = {2, 8, 1};
   const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {1, 16, 16, 1};
+  const uint32_t valueParameters[] = {2, 10, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
@@ -241,23 +241,48 @@ int main() {
     -1,  1,  0
   };
   
+  float valueInput[valueParameters[0] * batchSize];
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
-    setRandomInput(&policy, &seed1, &seed2);
-    forwardPropagate(&handle, &policy);
-    // get and print histogram of outputs from -4 to 4 using 100 bins
-    checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policy.layers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
-    uint32_t histogram[100];
-    memset(histogram, 0, 100 * sizeof(uint32_t));
-    for (uint32_t i = 0; i < policyParameters[policyLayers + 1] * batchSize; i++) {
-      uint32_t index = (uint32_t)((policyOutput[i] + 4.0f) / 8.0f * 100.0f);
-      if (index >= 100) index = 99;
-      histogram[index]++;
+    for (uint32_t batch = 0; batch < batchSize; batch++) {
+      valueInput[batch * 2] = generateRandomUint32(&seed1, &seed2) % 3;
+      valueInput[batch * 2 + 1] = 1.0f;
+      switch ((int)valueInput[batch * 2]) {
+        case 0:
+          valueTarget[batch] = 0.5f;
+          break;
+        case 1:
+          valueTarget[batch] = 1.0f;
+          break;
+        case 2:
+          valueTarget[batch] = 0.25f;
+          break;
+      }
     }
-    printf("Epoch %d:\n", epoch);
-    for (uint32_t i = 10; i < 90; i++)
-      printf("%d ", histogram[i]);
-    printf("\n");
+      
+    // feedforward
+    setInput(&value, valueInput);
+    forwardPropagate(&handle, &value);
+    
+    // set target
+    setOutputTarget(&handle, &value, valueTarget);
+    backPropagate(&handle, &value, epoch % 100 == 0);
+    
+    // update weights
+    updateWeights(&handle, &value, valueLearningRate);
   }
+  
+  // now graph inputs to outputs. 0 - 2 using 10 points. so point 1 is 0, etc
+  for (uint32_t point = 0; point < 11; point++) {
+    valueInput[0] = (float)point / 5.0f;
+    setInput(&value, valueInput);
+    forwardPropagate(&handle, &value);
+    
+    float valueOutput[valueParameters[valueLayers + 1] * batchSize];
+    checkCudaStatus(cudaMemcpy(valueOutput, value.outputs[valueLayers + 1], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    printf("%f %f\n", valueInput[0], valueOutput[0]);
+  }
+  
   freeNetwork(&policy);
   freeNetwork(&value);
   

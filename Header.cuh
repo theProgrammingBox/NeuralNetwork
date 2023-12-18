@@ -33,6 +33,16 @@ void initializeSeeds(uint32_t *seed1, uint32_t *seed2) {
     for (uint8_t i = 8; i--;) mixSeed(seed1, seed2);
 }
 
+float generateRandomFloat(uint32_t *seed1, uint32_t *seed2) {
+    mixSeed(seed1, seed2);
+    return (int32_t)*seed1 * 0.0000000004656612875245797f;
+}
+
+uint32_t generateRandomUint32(uint32_t *seed1, uint32_t *seed2) {
+    mixSeed(seed1, seed2);
+    return *seed1;
+}
+
 __global__ void _fillDTensor(float *dTensor, uint32_t size, uint32_t seed1, uint32_t seed2) {
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= size) return;
