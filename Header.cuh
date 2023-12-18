@@ -77,6 +77,16 @@ void customFillDTensor(float *dTensor, uint32_t size, uint32_t *seed1, uint32_t 
     _customFillDTensor<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size, *seed1, *seed2);
 }
 
+__global__ void _customFillDTensorConstant(float *dTensor, uint32_t size, float constant) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= size) return;
+    dTensor[idx] = constant;
+}
+
+void customFillDTensorConstant(float *dTensor, uint32_t size, float constant) {
+    _customFillDTensorConstant<<<(size >> 10) + (size & 0x3ff), 0x400>>>(dTensor, size, constant);
+}
+
 void printDTensor(float *dTensor, uint32_t width, uint32_t height, const char *label) {
     float *tensor = (float *)malloc(width * height * sizeof(float));
     checkCudaStatus(cudaMemcpy(tensor, dTensor, width * height * sizeof(float), cudaMemcpyDeviceToHost));

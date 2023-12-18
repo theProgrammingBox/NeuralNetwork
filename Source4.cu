@@ -1,5 +1,11 @@
 #include "Header.cuh"
 
+/*
+LESSONS LEARNED:
+- shallower network needs more epochs given simple task as deeper networks can quickly compound changes(hypoth)
+- adding more depth to network can help with more complex tasks or create more complex dynamic in my case
+*/
+
 struct network {
   uint32_t batchSize;
   uint32_t layers;
@@ -105,6 +111,10 @@ void setOutputTarget(cublasHandle_t *cublasHandle, network* net, float* target, 
 
 void setOutputGradients(network* net, float* gradients, bool host = true) {
   checkCudaStatus(cudaMemcpy(net->outputGradients[net->layers + 1], gradients, net->parameters[net->layers + 1] * net->batchSize * sizeof(float), host ? cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice));
+}
+
+void setOutputGradientsToConstant(network* net, float constant) {
+  customFillDTensorConstant(net->outputGradients[net->layers + 1], net->parameters[net->layers + 1] * net->batchSize, constant);
 }
 
 void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint = false, bool debug = false) {
@@ -216,12 +226,12 @@ int main() {
   
   const float policyLearningRate = 0.00001f;
   const float valueLearningRate = 0.0001f;
-  const uint32_t epochs = 4096 * 4;
+  const uint32_t epochs = 4096 * 8;
   const uint32_t batchSize = 256;
   
   
   network policy;
-  const uint32_t policyParameters[] = {2, 8, 1};
+  const uint32_t policyParameters[] = {2, 8, 8, 1};
   const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
@@ -263,13 +273,21 @@ int main() {
     setOutputTarget(&handle, &value, valueTarget);
     backPropagate(&handle, &value, epoch % 100 == 0);
     updateWeights(&handle, &value, valueLearningRate);
+    
+    // if (epoch % 8 == 0) {
+      setOutputGradientsToConstant(&value, 1.0f);
+      backPropagate(&handle, &value);
+      setOutputGradients(&policy, value.outputGradients[0], false);
+      backPropagate(&handle, &policy);
+      updateWeights(&handle, &policy, policyLearningRate);
+    // }
   }
   printf("\n");
   
   float policyInput[policyParameters[0] * batchSize];
-  for (uint32_t point = 0; point < 11; point++) {
+  for (uint32_t point = 0; point < 21; point++) {
     policyInput[0] = 1;
-    policyInput[1] = ((float)point- 5) / 5.0f;
+    policyInput[1] = ((float)point- 10) / 10.0f;
     setInput(&policy, policyInput);
     forwardPropagate(&handle, &policy);
     
@@ -291,8 +309,8 @@ int main() {
   }
   printf("\n");
   
-  for (uint32_t point = 0; point < 11; point++) {
-    valueInput[0] = ((float)point- 5) / (5.0f / 0.2f);
+  for (uint32_t point = 0; point < 21; point++) {
+    valueInput[0] = ((float)point- 10) / (10.0f / 0.2f);
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
     
@@ -300,10 +318,8 @@ int main() {
     checkCudaStatus(cudaMemcpy(valueOutput, value.outputs[valueLayers + 1], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     
     float valueGradient[valueParameters[valueLayers + 1] * batchSize];
-    for (uint32_t batch = 0; batch < batchSize; batch++)
-      valueGradient[batch] = -1.0f;
     
-    setOutputGradients(&value, valueGradient);
+    setOutputGradientsToConstant(&value, 1.0f);
     backPropagate(&handle, &value);
     
     float valueInputGradient[valueParameters[valueLayers + 1] * batchSize];
