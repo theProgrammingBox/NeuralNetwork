@@ -215,8 +215,8 @@ int main() {
   checkCublasStatus(cublasCreate(&handle));
   
   const float policyLearningRate = 0.00001f;
-  const float valueLearningRate = 0.001f;
-  const uint32_t epochs = 2048;
+  const float valueLearningRate = 0.0001f;
+  const uint32_t epochs = 4096 * 4;
   const uint32_t batchSize = 256;
   
   
@@ -226,15 +226,13 @@ int main() {
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {2, 8, 1};
+  const uint32_t valueParameters[] = {2, 8, 8, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
   float policyOutput[policyParameters[policyLayers + 1] * batchSize];
   float valueTarget[policyParameters[policyLayers + 1] * batchSize];
-  // float valueGradient[policyParameters[policyLayers + 1] * batchSize];
   uint32_t actions[batchSize];
-  const uint32_t samples = 2048;
   const int outcomes[9] = {
     0, -1,  1,
     1,  0, -1,
@@ -246,19 +244,16 @@ int main() {
     setCustomRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
     
-    // copy
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     for (uint32_t batch = 0; batch < batchSize; batch++) {
+      valueInput[batch * 2] = policyOutput[batch];
       valueInput[batch * 2 + 1] = 1.0f;
       
       if (policyOutput[batch] < -0.1f) {
-        valueInput[batch * 2] = 0;
         valueTarget[batch] = -0.75;
       } else if (policyOutput[batch] < 0.1f) {
-        valueInput[batch * 2] = 1;
         valueTarget[batch] = 1.0;
       } else{
-        valueInput[batch * 2] = 2;
         valueTarget[batch] = 0.25;
       }
     }
@@ -285,22 +280,19 @@ int main() {
     float value;
     
     if (policyOutput[0] < -0.1f) {
-      input = 0;
       value = -0.75;
     } else if (policyOutput[0] < 0.1f) {
-      input = 1;
       value = 1.0;
     } else{
-      input = 2;
       value = 0.25;
     }
     
-    printf("%f %f %f %f\n", policyInput[1], policyOutput[0], input, value);
+    printf("%f %f %f\n", policyInput[1], policyOutput[0], value);
   }
   printf("\n");
   
   for (uint32_t point = 0; point < 11; point++) {
-    valueInput[0] = (float)point / 5.0f;
+    valueInput[0] = ((float)point- 5) / (5.0f / 0.2f);
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
     
