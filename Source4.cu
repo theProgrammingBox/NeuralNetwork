@@ -216,7 +216,7 @@ int main() {
   
   const float policyLearningRate = 0.00001f;
   const float valueLearningRate = 0.001f;
-  const uint32_t epochs = 1000;
+  const uint32_t epochs = 2048;
   const uint32_t batchSize = 256;
   
   
@@ -234,7 +234,7 @@ int main() {
   float valueTarget[policyParameters[policyLayers + 1] * batchSize];
   // float valueGradient[policyParameters[policyLayers + 1] * batchSize];
   uint32_t actions[batchSize];
-  const uint32_t samples = 1024;
+  const uint32_t samples = 2048;
   const int outcomes[9] = {
     0, -1,  1,
     1,  0, -1,
@@ -243,47 +243,58 @@ int main() {
   
   float valueInput[valueParameters[0] * batchSize];
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
+    setCustomRandomInput(&policy, &seed1, &seed2);
+    forwardPropagate(&handle, &policy);
+    
+    // copy
+    checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     for (uint32_t batch = 0; batch < batchSize; batch++) {
-      valueInput[batch * 2] = generateRandomUint32(&seed1, &seed2) % 3;
       valueInput[batch * 2 + 1] = 1.0f;
-      switch ((int)valueInput[batch * 2]) {
-        case 0:
-          valueTarget[batch] = 0.5f;
-          break;
-        case 1:
-          valueTarget[batch] = 1.0f;
-          break;
-        case 2:
-          valueTarget[batch] = 0.25f;
-          break;
+      
+      if (policyOutput[batch] < -0.1f) {
+        valueInput[batch * 2] = 0;
+        valueTarget[batch] = 0.5;
+      } else if (policyOutput[batch] < 0.1f) {
+        valueInput[batch * 2] = 1;
+        valueTarget[batch] = 1.0;
+      } else{
+        valueInput[batch * 2] = 2;
+        valueTarget[batch] = 0.25;
       }
     }
-      
-    // feedforward
+    
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
-    
-    // set target
     setOutputTarget(&handle, &value, valueTarget);
     backPropagate(&handle, &value, epoch % 100 == 0);
-    
-    // update weights
     updateWeights(&handle, &value, valueLearningRate);
   }
+  printf("\n");
   
-  // now graph inputs to outputs. 0 - 2 using 10 points. so point 1 is 0, etc
-  // for (uint32_t point = 0; point < 11; point++) {
-  //   valueInput[0] = (float)point / 5.0f;
-  //   setInput(&value, valueInput);
-  //   forwardPropagate(&handle, &value);
+  float policyInput[policyParameters[0] * batchSize];
+  for (uint32_t point = 0; point < 11; point++) {
+    policyInput[0] = 1;
+    policyInput[1] = ((float)point- 5) / 5.0f;
+    setInput(&policy, policyInput);
+    forwardPropagate(&handle, &policy);
     
-  //   float valueOutput[valueParameters[valueLayers + 1] * batchSize];
-  //   checkCudaStatus(cudaMemcpy(valueOutput, value.outputs[valueLayers + 1], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    float policyOutput[policyParameters[policyLayers + 1] * batchSize];
+    checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     
-  //   printf("%f %f\n", valueInput[0], valueOutput[0]);
-  // }
+    float value;
+    
+    if (policyOutput[0] < -0.1f) {
+      value = 0.5;
+    } else if (policyOutput[0] < 0.1f) {
+      value = 1.0;
+    } else{
+      value = 0.25;
+    }
+    
+    printf("%f %f %f\n", policyInput[1], policyOutput[0], value);
+  }
+  printf("\n");
   
-  // now we want to see for each point, how should the input change if the output needs to decrease. set the output gradient is -1.0f
   for (uint32_t point = 0; point < 11; point++) {
     valueInput[0] = (float)point / 5.0f;
     setInput(&value, valueInput);
