@@ -4,6 +4,21 @@
 LESSONS LEARNED:
 - shallower network needs more epochs given simple task as deeper networks can quickly compound changes(hypoth)
 - adding more depth to network can help with more complex tasks or create more complex dynamic in my case
+- massive and miniscule gradients are possible with my algo due to the value network modeling the "reward" of the policy network
+- in my algo, the value nn forgets senarios it has not seen in a while, will need a way to solve this
+-- maybe alot more diversity so it doesn't really need to remember as long as it can keep up with modern senarios
+- currently policy has the behavior of just exploding to out of bounds actions, has to do with value nn not reflecting the true reward gradient initially(hypoth)
+-- tried training value nn first 1024 epoch, then policy nn, but it shows 0 gradient, see if adam can help. can be the extreme gradients of the learned value nn
+*/
+
+/*
+TASKS
+- test reliablity of sgd vs adam
+- adam
+-- test adam to see if gradients are more stable. miniscule, and massive should look "normalized" hopefully
+--- do not update policy network with value network gradients to see it it can normalize full picture
+- simulate rps to see if it can handle basic changing strategies
+-- maybe see oscillating strategies. see if stagnates due to the nature of nn or value function failure
 */
 
 struct network {
@@ -224,11 +239,10 @@ int main() {
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
   
-  const float policyLearningRate = 0.00001f;
+  const float policyLearningRate = 0.000001f;
   const float valueLearningRate = 0.0001f;
   const uint32_t epochs = 4096 * 8;
   const uint32_t batchSize = 256;
-  
   
   network policy;
   const uint32_t policyParameters[] = {2, 8, 8, 1};
@@ -274,13 +288,13 @@ int main() {
     backPropagate(&handle, &value, epoch % 100 == 0);
     updateWeights(&handle, &value, valueLearningRate);
     
-    // if (epoch % 8 == 0) {
+    if (epoch >= 1024) {
       setOutputGradientsToConstant(&value, 1.0f);
       backPropagate(&handle, &value);
       setOutputGradients(&policy, value.outputGradients[0], false);
       backPropagate(&handle, &policy);
       updateWeights(&handle, &policy, policyLearningRate);
-    // }
+    }
   }
   printf("\n");
   
