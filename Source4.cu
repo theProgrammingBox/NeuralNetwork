@@ -226,13 +226,13 @@ int main() {
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {2, 10, 1};
+  const uint32_t valueParameters[] = {2, 8, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
   float policyOutput[policyParameters[policyLayers + 1] * batchSize];
   float valueTarget[policyParameters[policyLayers + 1] * batchSize];
-  float valueGradient[policyParameters[policyLayers + 1] * batchSize];
+  // float valueGradient[policyParameters[policyLayers + 1] * batchSize];
   uint32_t actions[batchSize];
   const uint32_t samples = 1024;
   const int outcomes[9] = {
@@ -272,6 +272,18 @@ int main() {
   }
   
   // now graph inputs to outputs. 0 - 2 using 10 points. so point 1 is 0, etc
+  // for (uint32_t point = 0; point < 11; point++) {
+  //   valueInput[0] = (float)point / 5.0f;
+  //   setInput(&value, valueInput);
+  //   forwardPropagate(&handle, &value);
+    
+  //   float valueOutput[valueParameters[valueLayers + 1] * batchSize];
+  //   checkCudaStatus(cudaMemcpy(valueOutput, value.outputs[valueLayers + 1], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    
+  //   printf("%f %f\n", valueInput[0], valueOutput[0]);
+  // }
+  
+  // now we want to see for each point, how should the input change if the output needs to decrease. set the output gradient is -1.0f
   for (uint32_t point = 0; point < 11; point++) {
     valueInput[0] = (float)point / 5.0f;
     setInput(&value, valueInput);
@@ -280,7 +292,17 @@ int main() {
     float valueOutput[valueParameters[valueLayers + 1] * batchSize];
     checkCudaStatus(cudaMemcpy(valueOutput, value.outputs[valueLayers + 1], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     
-    printf("%f %f\n", valueInput[0], valueOutput[0]);
+    float valueGradient[valueParameters[valueLayers + 1] * batchSize];
+    for (uint32_t batch = 0; batch < batchSize; batch++)
+      valueGradient[batch] = -1.0f;
+    
+    setOutputGradients(&value, valueGradient);
+    backPropagate(&handle, &value);
+    
+    float valueInputGradient[valueParameters[valueLayers + 1] * batchSize];
+    checkCudaStatus(cudaMemcpy(valueInputGradient, value.outputGradients[0], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    printf("%f %f %f\n", valueInput[0], valueOutput[0], valueInputGradient[0]);
   }
   
   freeNetwork(&policy);
