@@ -9,14 +9,13 @@ LESSONS LEARNED:
 -- maybe alot more diversity so it doesn't really need to remember as long as it can keep up with modern senarios
 - currently policy has the behavior of just exploding to out of bounds actions, has to do with value nn not reflecting the true reward gradient initially(hypoth)
 -- tried training value nn first 1024 epoch, then policy nn, but it shows 0 gradient, see if adam can help. can be the extreme gradients of the learned value nn
+-- tried setting the score for out of bounds actions to 0, but it still kind of doesn't work
+--- the problem is that the slope at the edges are not steering towards the center all the time because it is basically learning a step function that is not exactly flat.
 */
 
 /*
-TASKS
-- test reliablity of sgd vs adam
-- adam
--- test adam to see if gradients are more stable. miniscule, and massive should look "normalized" hopefully
---- do not update policy network with value network gradients to see it it can normalize full picture
+TASKS:
+- visualize data on different application
 - simulate rps to see if it can handle basic changing strategies
 -- maybe see oscillating strategies. see if stagnates due to the nature of nn or value function failure
 - add cuda memset for 0s called zero
@@ -258,8 +257,8 @@ int main() {
   const float varianceBeta = 0.999f;
   const float policyLearningRate = 0.000001f;
   const float valueLearningRate = 0.0001f;
-  const uint32_t epochs = 4096 * 8;
-  const uint32_t batchSize = 256;
+  const uint32_t epochs = 4096 * 16;
+  const uint32_t batchSize = 4096;
   
   network policy;
   const uint32_t policyParameters[] = {2, 8, 8, 1};
@@ -267,7 +266,7 @@ int main() {
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {2, 8, 8, 1};
+  const uint32_t valueParameters[] = {2, 16, 16, 16, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
@@ -287,31 +286,37 @@ int main() {
     
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     for (uint32_t batch = 0; batch < batchSize; batch++) {
-      valueInput[batch * 2] = policyOutput[batch];
+      // float in = generateRandomFloat(&seed1, &seed2) * 0.2f;
+      float in = policyOutput[batch];
+      valueInput[batch * 2] = in;
       valueInput[batch * 2 + 1] = 1.0f;
       
-      if (policyOutput[batch] < -0.1f) {
-        valueTarget[batch] = -0.75;
-      } else if (policyOutput[batch] < 0.1f) {
-        valueTarget[batch] = 1.0;
-      } else{
+      if (in < -0.15f) {
+        valueTarget[batch] = 0.0;
+      } else if (in < -0.05f) {
+        valueTarget[batch] = 0.90;
+      } else if (in < 0.05f) {
         valueTarget[batch] = 0.25;
+      } else if (in < 0.15f) {
+        valueTarget[batch] = 0.70;
+      } else{
+        valueTarget[batch] = 0.0;
       }
     }
     
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
     setOutputTarget(&handle, &value, valueTarget);
-    backPropagate(&handle, &value, epoch % 100 == 0);
+    backPropagate(&handle, &value, epoch % 1024 == 0);
     updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate);
     
-    if (epoch >= 1024) {
+    // if (epoch >= epochs >> 1) {
       setOutputGradientsToConstant(&value, 1.0f);
       backPropagate(&handle, &value);
       setOutputGradients(&policy, value.outputGradients[0], false);
       backPropagate(&handle, &policy);
       updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate);
-    }
+    // }
   }
   printf("\n");
   
@@ -328,12 +333,19 @@ int main() {
     float input;
     float value;
     
-    if (policyOutput[0] < -0.1f) {
-      value = -0.75;
-    } else if (policyOutput[0] < 0.1f) {
-      value = 1.0;
-    } else{
+    float in = policyOutput[0];
+    // float in = policyInput[1];
+    
+    if (in < -0.15f) {
+      value = 0.0;
+    } else if (in < -0.05f) {
+      value = 0.90;
+    } else if (in < 0.05f) {
       value = 0.25;
+    } else if (in < 0.15f) {
+      value = 0.70;
+    } else{
+      value = 0.0;
     }
     
     printf("%f %f %f\n", policyInput[1], policyOutput[0], value);
@@ -341,7 +353,7 @@ int main() {
   printf("\n");
   
   for (uint32_t point = 0; point < 21; point++) {
-    valueInput[0] = ((float)point- 10) / (10.0f / 0.2f);
+    valueInput[0] = ((float)point- 10) / (10.0f);
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
     
