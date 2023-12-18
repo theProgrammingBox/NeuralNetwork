@@ -253,7 +253,7 @@ int main() {
       
       if (policyOutput[batch] < -0.1f) {
         valueInput[batch * 2] = 0;
-        valueTarget[batch] = 0.5;
+        valueTarget[batch] = -0.75;
       } else if (policyOutput[batch] < 0.1f) {
         valueInput[batch * 2] = 1;
         valueTarget[batch] = 1.0;
@@ -281,17 +281,21 @@ int main() {
     float policyOutput[policyParameters[policyLayers + 1] * batchSize];
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     
+    float input;
     float value;
     
     if (policyOutput[0] < -0.1f) {
-      value = 0.5;
+      input = 0;
+      value = -0.75;
     } else if (policyOutput[0] < 0.1f) {
+      input = 1;
       value = 1.0;
     } else{
+      input = 2;
       value = 0.25;
     }
     
-    printf("%f %f %f\n", policyInput[1], policyOutput[0], value);
+    printf("%f %f %f %f\n", policyInput[1], policyOutput[0], input, value);
   }
   printf("\n");
   
