@@ -261,7 +261,7 @@ int main() {
   const uint32_t batchSize = 4096;
   
   network policy;
-  const uint32_t policyParameters[] = {2, 8, 8, 1};
+  const uint32_t policyParameters[] = {3, 8, 8, 1};
   const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
@@ -291,16 +291,12 @@ int main() {
       valueInput[batch * 2] = in;
       valueInput[batch * 2 + 1] = 1.0f;
       
-      if (in < -0.15f) {
-        valueTarget[batch] = 0.0;
-      } else if (in < -0.05f) {
-        valueTarget[batch] = 0.90;
-      } else if (in < 0.05f) {
-        valueTarget[batch] = 0.25;
-      } else if (in < 0.15f) {
+      if (in < -0.05f) {
         valueTarget[batch] = 0.70;
-      } else{
-        valueTarget[batch] = 0.0;
+      } else if (in < 0.05f) {
+        valueTarget[batch] = 0.90;
+      } else {
+        valueTarget[batch] = 0.25;
       }
     }
     
@@ -324,6 +320,7 @@ int main() {
   for (uint32_t point = 0; point < 21; point++) {
     policyInput[0] = 1;
     policyInput[1] = ((float)point- 10) / 10.0f;
+    policyInput[2] = 1.0f;
     setInput(&policy, policyInput);
     forwardPropagate(&handle, &policy);
     
@@ -336,16 +333,12 @@ int main() {
     float in = policyOutput[0];
     // float in = policyInput[1];
     
-    if (in < -0.15f) {
-      value = 0.0;
-    } else if (in < -0.05f) {
-      value = 0.90;
-    } else if (in < 0.05f) {
-      value = 0.25;
-    } else if (in < 0.15f) {
+    if (in < -0.05f) {
       value = 0.70;
-    } else{
-      value = 0.0;
+    } else if (in < 0.05f) {
+      value = 0.90;
+    } else {
+      value = 0.25;
     }
     
     printf("%f %f %f\n", policyInput[1], policyOutput[0], value);
@@ -353,7 +346,7 @@ int main() {
   printf("\n");
   
   for (uint32_t point = 0; point < 21; point++) {
-    valueInput[0] = ((float)point- 10) / (10.0f);
+    valueInput[0] = ((float)point- 10) / (10.0f / 0.4f);
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
     
