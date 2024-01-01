@@ -35,11 +35,10 @@ struct network {
   float** weightGradientsVariance;
 };
 
-void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t layers, const uint32_t* parameters, uint32_t *seed1, uint32_t *seed2, bool debug = false) {
+void initializeNetwork(network* net, const uint32_t batchSize, const uint32_t layers, uint32_t* parameters, uint32_t *seed1, uint32_t *seed2, bool debug = false) {
   net->batchSize = batchSize;
   net->layers = layers;
-  net->parameters = (uint32_t*)malloc((net->layers + 2) * sizeof(uint32_t));
-  memcpy(net->parameters, parameters, (net->layers + 2) * sizeof(uint32_t));
+  net->parameters = parameters;
   
   net->meanCorrection = 1.0f;
   net->varianceCorrection = 1.0f;
@@ -242,8 +241,6 @@ void freeNetwork(network* net, bool debug = false) {
     checkCudaStatus(cudaFree(net->outputs[i]));
   
   free(net->outputs);
-  
-  free(net->parameters);
 }
 
 int main() {
@@ -257,16 +254,16 @@ int main() {
   const float varianceBeta = 0.999f;
   const float policyLearningRate = 0.000001f;
   const float valueLearningRate = 0.0001f;
-  const uint32_t epochs = 4096 * 16;
-  const uint32_t batchSize = 4096;
+  const uint32_t epochs = 4096 * 4;
+  const uint32_t batchSize = 1024;
   
   network policy;
-  const uint32_t policyParameters[] = {3, 8, 8, 1};
+  uint32_t policyParameters[] = {3, 8, 8, 1};
   const uint32_t policyLayers = sizeof(policyParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&policy, batchSize, policyLayers, policyParameters, &seed1, &seed2);
   
   network value;
-  const uint32_t valueParameters[] = {2, 16, 16, 16, 1};
+  uint32_t valueParameters[] = {2, 8, 8, 1};
   const uint32_t valueLayers = sizeof(valueParameters) / sizeof(uint32_t) - 2;
   initializeNetwork(&value, batchSize, valueLayers, valueParameters, &seed1, &seed2);
   
@@ -300,19 +297,21 @@ int main() {
       }
     }
     
+    
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
     setOutputTarget(&handle, &value, valueTarget);
     backPropagate(&handle, &value, epoch % 1024 == 0);
     updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate);
     
-    // if (epoch >= epochs >> 1) {
-      setOutputGradientsToConstant(&value, 1.0f);
-      backPropagate(&handle, &value);
-      setOutputGradients(&policy, value.outputGradients[0], false);
-      backPropagate(&handle, &policy);
-      updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate);
-    // }
+    
+    setInput(&value, valueInput);
+    forwardPropagate(&handle, &value);
+    setOutputGradientsToConstant(&value, 1.0f);
+    backPropagate(&handle, &value);
+    setOutputGradients(&policy, value.outputGradients[0], false);
+    backPropagate(&handle, &policy);
+    updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate);
   }
   printf("\n");
   
