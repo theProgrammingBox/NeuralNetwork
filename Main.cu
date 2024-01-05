@@ -85,6 +85,47 @@ int main() {
     for (uint8_t i = 0; i < 9; i++) printf("%f ", h_output[i]);
     printf("\n");
     
+    
+float h_output_grad[9];
+for (uint8_t i = 0; i < 9; i++) h_output_grad[i] = 18-h_output[i];
+    
+    float* d_output_grad;
+cudaMalloc(&d_output_grad, sizeof(float) * 3 * 3);
+cudaMemcpy(d_output_grad, h_output_grad, sizeof(float) * 3 * 3, cudaMemcpyHostToDevice);
+
+float* d_input_grad;
+cudaMalloc(&d_input_grad, sizeof(float) * 3 * 3);
+
+float* d_kernel_grad;
+cudaMalloc(&d_kernel_grad, sizeof(float) * 3 * 3);
+
+cudnnConvolutionBwdDataAlgoPerf_t propagationAlgorithms2[1];
+cudnnFindConvolutionBackwardDataAlgorithm(cudnn, kernel_descriptor, output_descriptor, conv_descriptor, input_descriptor, maxPropagationAlgorithms, &maxPropagationAlgorithms, propagationAlgorithms2);
+cudnnConvolutionBwdDataAlgo_t backwardPropagationDataAlgorithm = propagationAlgorithms2[0].algo;
+printf("Backward propagation data algorithm: %d\n\n", backwardPropagationDataAlgorithm);
+
+cudnnConvolutionBwdFilterAlgoPerf_t propagationAlgorithms3[1];
+cudnnFindConvolutionBackwardFilterAlgorithm(cudnn, input_descriptor, output_descriptor, conv_descriptor, kernel_descriptor, maxPropagationAlgorithms, &maxPropagationAlgorithms, propagationAlgorithms3);
+cudnnConvolutionBwdFilterAlgo_t backwardPropagationFilterAlgorithm = propagationAlgorithms3[0].algo;
+printf("Backward propagation filter algorithm: %d\n\n", backwardPropagationFilterAlgorithm);
+
+
+cudnnConvolutionBackwardData(cudnn, &alpha, kernel_descriptor, kernel, output_descriptor, d_output_grad, conv_descriptor, backwardPropagationDataAlgorithm, NULL, 0, &beta, input_descriptor, d_input_grad);
+cudnnConvolutionBackwardFilter(cudnn, &alpha, input_descriptor, input, output_descriptor, d_output_grad, conv_descriptor, backwardPropagationFilterAlgorithm, NULL, 0, &beta, kernel_descriptor, d_kernel_grad);
+
+float h_input_grad[9];
+cudaMemcpy(h_input_grad, d_input_grad, sizeof(float) * 3 * 3, cudaMemcpyDeviceToHost);
+for (uint8_t i = 0; i < 9; i++) printf("%f ", h_input_grad[i]);
+printf("\n");
+
+float h_kernel_grad[9];
+cudaMemcpy(h_kernel_grad, d_kernel_grad, sizeof(float) * 3 * 3, cudaMemcpyDeviceToHost);
+for (uint8_t i = 0; i < 9; i++) printf("%f ", h_kernel_grad[i]);
+printf("\n");
+    
+    
+    
+    
     // uint8_t board[BOARD_SIZE * BOARD_SIZE] = {0};
     // uint8_t px, py;
     // uint8_t gx, gy;
