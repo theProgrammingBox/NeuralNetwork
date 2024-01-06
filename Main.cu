@@ -81,10 +81,10 @@ int main() {
   };
     
   float hInputGradTensor[4 * 4 * 1 * 1];
-  float hKernelGradTensor[3 * 3 * 2 * 1];
+  float hKernelGradTensor[3 * 3 * 1 * 2];
   
   cudaMemcpy(dInputTensor, hInputTensor, 4 * 4 * 1 * 1 * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMemcpy(dKernelTensor, hKernelTensor, 3 * 3 * 2 * 1 * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(dKernelTensor, hKernelTensor, 3 * 3 * 1 * 2 * sizeof(float), cudaMemcpyHostToDevice);
   
   const float alpha = 1.0f;
   const float beta = 0.0f;
@@ -137,7 +137,7 @@ int main() {
     kernelDesc, dKernelGradTensor);
   
   cudaMemcpy(hInputGradTensor, dInputGradTensor, 4 * 4 * 1 * 1 * sizeof(float), cudaMemcpyDeviceToHost);
-  cudaMemcpy(hKernelGradTensor, dKernelGradTensor, 3 * 3 * 2 * 1 * sizeof(float), cudaMemcpyDeviceToHost);
+  cudaMemcpy(hKernelGradTensor, dKernelGradTensor, 3 * 3 * 1 * 2 * sizeof(float), cudaMemcpyDeviceToHost);
   
   printf("hInputGradTensor:\n");
   for (int i = 0; i < 1; ++i) {
@@ -154,11 +154,11 @@ int main() {
   }
   
   printf("hKernelGradTensor:\n");
-  for (int i = 0; i < 1; ++i) {
-    for (int j = 0; j < 2; ++j) {
+  for (int i = 0; i < 2; ++i) {
+    for (int j = 0; j < 1; ++j) {
       for (int k = 0; k < 3; ++k) {
         for (int l = 0; l < 3; ++l) {
-          printf("%f ", hKernelGradTensor[i * 2 * 3 * 3 + j * 3 * 3 + k * 3 + l]);
+          printf("%f ", hKernelGradTensor[i * 3 * 3 * 1 + j * 3 * 3 + k * 3 + l]);
         }
         printf("\n");
       }
