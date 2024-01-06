@@ -1,205 +1,151 @@
 #include <stdio.h>
 #include <stdint.h>
-#include <sys/time.h>
 
 #include <cudnn.h>
 #include <cublas_v2.h>
 
-#define BOARD_SIZE 8
-#define VISION_SIZE 3
-
-void mixSeed(uint32_t *seed1, uint32_t *seed2) {
-    *seed2 ^= (*seed1 >> 13) * 0x9c7493ad;
-    *seed1 ^= (*seed2 >> 17) * 0xbf324c81;
-}
-
-void initializeSeeds(uint32_t *seed1, uint32_t *seed2) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    *seed1 = tv.tv_sec;
-    *seed2 = tv.tv_usec;
-    for (uint8_t i = 8; i--;) mixSeed(seed1, seed2);
-}
-
-uint32_t generateRandomUI32(uint32_t *seed1, uint32_t *seed2) {
-    mixSeed(seed1, seed2);
-    return *seed1;
-}
-
-float generateRandomFloat(uint32_t *seed1, uint32_t *seed2) {
-    mixSeed(seed1, seed2);
-    return (int32_t)*seed1 * 0.0000000004656612875245797f;
-}
-
 int main() {
-    cudnnHandle_t cudnn;
-    cudnnCreate(&cudnn);
-    
-    float* input;
-    float* output;
-    float* kernel;
-    cudaMalloc(&input, 3 * 3 * sizeof(float));
-    cudaMalloc(&output, 3 * 3 * sizeof(float));
-    cudaMalloc(&kernel, 3 * 3 * sizeof(float));
-    
-    float h_input[9] = { 
-        1, 2, 3, 
-        4, 5, 6, 
-        7, 8, 9 };
-    float h_kernel[9] = { 
-        0.1, 0.2, 0.3,
-        0.4, 0.5, 0.6 ,
-        0.7, 0.8, 0.9 };
-    cudaMemcpy(input, h_input, 9 * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(kernel, h_kernel, 9 * sizeof(float), cudaMemcpyHostToDevice);
-    
-    cudnnTensorDescriptor_t input_descriptor;
-    cudnnTensorDescriptor_t output_descriptor;
-    cudnnFilterDescriptor_t kernel_descriptor;
-
-    cudnnCreateTensorDescriptor(&input_descriptor);
-    cudnnCreateTensorDescriptor(&output_descriptor);
-    cudnnCreateFilterDescriptor(&kernel_descriptor);
-
-    cudnnSetTensor4dDescriptor(input_descriptor, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 1, 3, 3);
-    cudnnSetTensor4dDescriptor(output_descriptor, CUDNN_TENSOR_NHWC, CUDNN_DATA_FLOAT, 1, 1, 3, 3);
-    cudnnSetFilter4dDescriptor(kernel_descriptor, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, 1, 1, 3, 3);
-
-    cudnnConvolutionDescriptor_t conv_descriptor;
-    cudnnCreateConvolutionDescriptor(&conv_descriptor);
-    cudnnSetConvolution2dDescriptor(conv_descriptor, 1, 1, 1, 1, 1, 1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT);
-    
-    int maxPropagationAlgorithms = 1;
-    cudnnConvolutionFwdAlgoPerf_t propagationAlgorithms[1];
-    cudnnFindConvolutionForwardAlgorithm(cudnn, input_descriptor, kernel_descriptor, conv_descriptor, output_descriptor, maxPropagationAlgorithms, &maxPropagationAlgorithms, propagationAlgorithms);
-    cudnnConvolutionFwdAlgo_t forwardPropagationAlgorithm = propagationAlgorithms[0].algo;
-    printf("Forward propagation algorithm: %d\n\n", forwardPropagationAlgorithm);
-    
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-
-    cudnnConvolutionForward(cudnn, &alpha, input_descriptor, input, kernel_descriptor, kernel, conv_descriptor, forwardPropagationAlgorithm, NULL, 0, &beta, output_descriptor, output);
-    
-    float h_output[9];
-    cudaMemcpy(h_output, output, 9 * sizeof(float), cudaMemcpyDeviceToHost);
-    for (uint8_t i = 0; i < 9; i++) printf("%f ", h_output[i]);
+  cudnnHandle_t cudnn;
+  cudnnCreate(&cudnn);
+  
+  cudnnTensorDescriptor_t inputDesc;
+  cudnnTensorDescriptor_t outputDesc;
+  cudnnFilterDescriptor_t kernelDesc;
+  
+  cudnnCreateTensorDescriptor(&inputDesc);
+  cudnnCreateTensorDescriptor(&outputDesc);
+  cudnnCreateFilterDescriptor(&kernelDesc);
+  
+  cudnnSetTensor4dDescriptor(inputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, 1, 4, 4);
+  cudnnSetTensor4dDescriptor(outputDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, 1, 2, 2);
+  cudnnSetFilter4dDescriptor(kernelDesc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, 1, 1, 3, 3);
+  
+  cudnnConvolutionDescriptor_t convDesc;
+  cudnnCreateConvolutionDescriptor(&convDesc);
+  cudnnSetConvolution2dDescriptor(convDesc, 0, 0, 1, 1, 1, 1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT);
+  
+  int maxConvAlgos = 1;
+  cudnnConvolutionFwdAlgoPerf_t convFwdAlgos[maxConvAlgos];
+  cudnnFindConvolutionForwardAlgorithm(cudnn, inputDesc, kernelDesc, convDesc, outputDesc, maxConvAlgos, &maxConvAlgos, convFwdAlgos);
+  cudnnConvolutionFwdAlgo_t convFwdAlgo = convFwdAlgos[0].algo;
+  printf("ConvFwdAlgo: %d\n\n", convFwdAlgo);
+  
+  float* dInputTensor;
+  float* dOutputTensor;
+  float* dKernelTensor;
+  
+  cudaMalloc(&dInputTensor, 4 * 4 * 1 * 1 * sizeof(float));
+  cudaMalloc(&dOutputTensor, 2 * 2 * 1 * 1 * sizeof(float));
+  cudaMalloc(&dKernelTensor, 3 * 3 * 1 * 1 * sizeof(float));
+  
+  float hInputTensor[4 * 4 * 1 * 1] = {
+    1, 2, 3, 4,
+    5, 6, 7, 8,
+    9,10,11,12,
+    13,14,15,16
+  };
+  
+  float hKernelTensor[3 * 3 * 1 * 1] = {
+    1, 2, 3,
+    4, 5, 6,
+    7, 8, 9
+  };
+  
+  cudaMemcpy(dInputTensor, hInputTensor, 4 * 4 * 1 * 1 * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(dKernelTensor, hKernelTensor, 3 * 3 * 1 * 1 * sizeof(float), cudaMemcpyHostToDevice);
+  
+  const float alpha = 1.0f;
+  const float beta = 0.0f;
+  cudnnConvolutionForward(
+    cudnn,
+    &alpha,
+    inputDesc, dInputTensor,
+    kernelDesc, dKernelTensor,
+    convDesc, convFwdAlgo,
+    0, 0,
+    &beta,
+    outputDesc, dOutputTensor);
+  
+  float hOutputTensor[2 * 2 * 1 * 1];
+  cudaMemcpy(hOutputTensor, dOutputTensor, 2 * 2 * 1 * 1 * sizeof(float), cudaMemcpyDeviceToHost);
+  
+  printf("Output:\n");
+  for (int k = 0; k < 2; k++) {
+    for (int l = 0; l < 2; l++) {
+      printf("%f ", hOutputTensor[k * 2 + l]);
+    }
     printf("\n");
+  }
+  printf("\n");
+  
+  cudnnConvolutionBwdDataAlgoPerf_t convBwdDataAlgos[maxConvAlgos];
+  cudnnFindConvolutionBackwardDataAlgorithm(cudnn, kernelDesc, outputDesc, convDesc, inputDesc, maxConvAlgos, &maxConvAlgos, convBwdDataAlgos);
+  cudnnConvolutionBwdDataAlgo_t convBwdDataAlgo = convBwdDataAlgos[0].algo;
+  printf("ConvBwdDataAlgo: %d\n\n", convBwdDataAlgo);
+  
+  cudnnConvolutionBwdFilterAlgoPerf_t convBwdFilterAlgos[maxConvAlgos];
+  cudnnFindConvolutionBackwardFilterAlgorithm(cudnn, inputDesc, outputDesc, convDesc, kernelDesc, maxConvAlgos, &maxConvAlgos, convBwdFilterAlgos);
+  cudnnConvolutionBwdFilterAlgo_t convBwdFilterAlgo = convBwdFilterAlgos[0].algo;
+  printf("ConvBwdFilterAlgo: %d\n\n", convBwdFilterAlgo);
+  
+  float* dInputGradTensor;
+  float* dOutputGradTensor;
+  float* dKernelGradTensor;
+  
+  cudaMalloc(&dInputGradTensor, 4 * 4 * 1 * 1 * sizeof(float));
+  cudaMalloc(&dOutputGradTensor, 2 * 2 * 1 * 1 * sizeof(float));
+  cudaMalloc(&dKernelGradTensor, 3 * 3 * 1 * 1 * sizeof(float));
+  
+  float hOutputGradTensor[2 * 2 * 1 * 1] = {
+    -1, -2,
+    -3, -4
+  };
+  
+  cudaMemcpy(dOutputGradTensor, hOutputGradTensor, 2 * 2 * 1 * 1 * sizeof(float), cudaMemcpyHostToDevice);
+  
+  cudnnConvolutionBackwardData(
+    cudnn,
+    &alpha,
+    kernelDesc, dKernelTensor,
+    outputDesc, dOutputGradTensor,
+    convDesc, convBwdDataAlgo,
+    0, 0,
+    &beta,
+    inputDesc, dInputGradTensor);
     
+    cudnnConvolutionBackwardFilter(
+    cudnn,
+    &alpha,
+    inputDesc, dInputTensor,
+    outputDesc, dOutputGradTensor,
+    convDesc, convBwdFilterAlgo,
+    0, 0,
+    &beta,
+    kernelDesc, dKernelGradTensor);
     
-float h_output_grad[9];
-for (uint8_t i = 0; i < 9; i++) h_output_grad[i] = 18-h_output[i];
-    
-    float* d_output_grad;
-cudaMalloc(&d_output_grad, sizeof(float) * 3 * 3);
-cudaMemcpy(d_output_grad, h_output_grad, sizeof(float) * 3 * 3, cudaMemcpyHostToDevice);
-
-float* d_input_grad;
-cudaMalloc(&d_input_grad, sizeof(float) * 3 * 3);
-
-float* d_kernel_grad;
-cudaMalloc(&d_kernel_grad, sizeof(float) * 3 * 3);
-
-cudnnConvolutionBwdDataAlgoPerf_t propagationAlgorithms2[1];
-cudnnFindConvolutionBackwardDataAlgorithm(cudnn, kernel_descriptor, output_descriptor, conv_descriptor, input_descriptor, maxPropagationAlgorithms, &maxPropagationAlgorithms, propagationAlgorithms2);
-cudnnConvolutionBwdDataAlgo_t backwardPropagationDataAlgorithm = propagationAlgorithms2[0].algo;
-printf("Backward propagation data algorithm: %d\n\n", backwardPropagationDataAlgorithm);
-
-cudnnConvolutionBwdFilterAlgoPerf_t propagationAlgorithms3[1];
-cudnnFindConvolutionBackwardFilterAlgorithm(cudnn, input_descriptor, output_descriptor, conv_descriptor, kernel_descriptor, maxPropagationAlgorithms, &maxPropagationAlgorithms, propagationAlgorithms3);
-cudnnConvolutionBwdFilterAlgo_t backwardPropagationFilterAlgorithm = propagationAlgorithms3[0].algo;
-printf("Backward propagation filter algorithm: %d\n\n", backwardPropagationFilterAlgorithm);
-
-
-cudnnConvolutionBackwardData(cudnn, &alpha, kernel_descriptor, kernel, output_descriptor, d_output_grad, conv_descriptor, backwardPropagationDataAlgorithm, NULL, 0, &beta, input_descriptor, d_input_grad);
-cudnnConvolutionBackwardFilter(cudnn, &alpha, input_descriptor, input, output_descriptor, d_output_grad, conv_descriptor, backwardPropagationFilterAlgorithm, NULL, 0, &beta, kernel_descriptor, d_kernel_grad);
-
-float h_input_grad[9];
-cudaMemcpy(h_input_grad, d_input_grad, sizeof(float) * 3 * 3, cudaMemcpyDeviceToHost);
-for (uint8_t i = 0; i < 9; i++) printf("%f ", h_input_grad[i]);
-printf("\n");
-
-float h_kernel_grad[9];
-cudaMemcpy(h_kernel_grad, d_kernel_grad, sizeof(float) * 3 * 3, cudaMemcpyDeviceToHost);
-for (uint8_t i = 0; i < 9; i++) printf("%f ", h_kernel_grad[i]);
-printf("\n");
-    
-    
-    
-    
-    // uint8_t board[BOARD_SIZE * BOARD_SIZE] = {0};
-    // uint8_t px, py;
-    // uint8_t gx, gy;
-    // char move;
-    
-    // uint32_t seed1, seed2;
-    // initializeSeeds(&seed1, &seed2);
-    
-    // px = generateRandomUI32(&seed1, &seed2) % BOARD_SIZE;
-    // py = generateRandomUI32(&seed1, &seed2) % BOARD_SIZE;
-    // do {
-    //     gx = generateRandomUI32(&seed1, &seed2) % BOARD_SIZE;
-    //     gy = generateRandomUI32(&seed1, &seed2) % BOARD_SIZE;
-    // } while (gx == px && gy == py);
-    // board[py * BOARD_SIZE + px] = 1;
-    // board[gy * BOARD_SIZE + gx] = 2;
-    // while (true) {
-    //     system("clear");
-        
-    //     for (uint8_t ry = 0; ry < BOARD_SIZE; ry++) {
-    //         for (uint8_t rx = 0; rx < BOARD_SIZE; rx++) {
-    //             switch (board[ry * BOARD_SIZE + rx]) {
-    //                 case 0:
-    //                     printf("- ");
-    //                     break;
-    //                 case 1:
-    //                     printf("P ");
-    //                     break;
-    //                 case 2:
-    //                     printf("C ");
-    //                     break;
-    //             }
-    //         }
-    //         printf("\n");
-    //     }
-    //     printf("\n");
-        
-    //     for (int8_t ry = py - VISION_SIZE; ry <= py + VISION_SIZE; ry++) {
-    //         for (int8_t rx = px - VISION_SIZE; rx <= px + VISION_SIZE; rx++) {
-    //             switch (board[(ry + BOARD_SIZE) % BOARD_SIZE * BOARD_SIZE + (rx + BOARD_SIZE) % BOARD_SIZE]) {
-    //                 case 0:
-    //                     printf("- ");
-    //                     break;
-    //                 case 1:
-    //                     printf("P ");
-    //                     break;
-    //                 case 2:
-    //                     printf("C ");
-    //                     break;
-    //             }
-    //         }
-    //         printf("\n");
-    //     }
-    //     printf("\n");
-        
-    //     board[py * BOARD_SIZE + px] = 0;
-        
-    //     printf("Move (wasd): ");
-    //     scanf(" %c", &move);
-    //     px += (move == 'd') - (move == 'a');
-    //     py += (move == 's') - (move == 'w');
-    //     px = (px + BOARD_SIZE) % BOARD_SIZE;
-    //     py = (py + BOARD_SIZE) % BOARD_SIZE;
-        
-    //     if (px == gx && py == gy) {
-    //         board[gy * BOARD_SIZE + gx] = 0;
-    //         do {
-    //             gx = generateRandomUI32(&seed1, &seed2) % BOARD_SIZE;
-    //             gy = generateRandomUI32(&seed1, &seed2) % BOARD_SIZE;
-    //         } while (gx == px && gy == py);
-    //         board[gy * BOARD_SIZE + gx] = 2;
-    //     }
-    //     board[py * BOARD_SIZE + px] = 1;
-    // }
-    
-    return 0;
+  float hInputGradTensor[4 * 4 * 1 * 1];
+  float hKernelGradTensor[3 * 3 * 1 * 1];
+  
+  cudaMemcpy(hInputGradTensor, dInputGradTensor, 4 * 4 * 1 * 1 * sizeof(float), cudaMemcpyDeviceToHost);
+  cudaMemcpy(hKernelGradTensor, dKernelGradTensor, 3 * 3 * 1 * 1 * sizeof(float), cudaMemcpyDeviceToHost);
+  
+  printf("InputDiff:\n");
+  for (int k = 0; k < 4; k++) {
+    for (int l = 0; l < 4; l++) {
+      printf("%f ", hInputGradTensor[k * 4 + l]);
+    }
+    printf("\n");
+  }
+  printf("\n");
+  
+  printf("KernelDiff:\n");
+  for (int k = 0; k < 3; k++) {
+    for (int l = 0; l < 3; l++) {
+      printf("%f ", hKernelGradTensor[k * 3 + l]);
+    }
+    printf("\n");
+  }
+  printf("\n");
+  
+  return 0;
 }
