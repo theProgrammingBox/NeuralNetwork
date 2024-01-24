@@ -1,24 +1,8 @@
 #include "Header.cuh"
 
 /*
-LESSONS LEARNED:
-- shallower network needs more epochs given simple task as deeper networks can quickly compound changes(hypoth)
-- adding more depth to network can help with more complex tasks or create more complex dynamic in my case
-- massive and miniscule gradients are possible with my algo due to the value network modeling the "reward" of the policy network
-- in my algo, the value nn forgets senarios it has not seen in a while, will need a way to solve this
--- maybe alot more diversity so it doesn't really need to remember as long as it can keep up with modern senarios
-- currently policy has the behavior of just exploding to out of bounds actions, has to do with value nn not reflecting the true reward gradient initially(hypoth)
--- tried training value nn first 1024 epoch, then policy nn, but it shows 0 gradient, see if adam can help. can be the extreme gradients of the learned value nn
--- tried setting the score for out of bounds actions to 0, but it still kind of doesn't work
---- the problem is that the slope at the edges are not steering towards the center all the time because it is basically learning a step function that is not exactly flat.
-*/
-
-/*
 TASKS:
-- visualize data on different application
-- simulate rps to see if it can handle basic changing strategies
--- maybe see oscillating strategies. see if stagnates due to the nature of nn or value function failure
-- add cuda memset for 0s called zero
+- maybe reimplement everything cuz that custom rand fill bug could have really messed up past results
 */
 
 struct network {
@@ -84,7 +68,7 @@ void setRandomInput(network* net, uint32_t *seed1, uint32_t *seed2) {
 }
 
 void setCustomRandomInput(network* net, uint32_t *seed1, uint32_t *seed2) {
-  customFillDTensor(net->outputs[0], net->parameters[0] * net->batchSize, seed1, seed2);
+  customFillDTensor(net->outputs[0], net->parameters[0] * net->batchSize, net->parameters[0], seed1, seed2);
 }
 
 void setInput(network* net, float* inputs, bool host = true) {
@@ -250,13 +234,14 @@ int main() {
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
   
-  const uint32_t epochs = 4096 * 16;
+  const uint32_t epochs = 1024;
+  // const uint32_t epochs = 4096 * 16;
   const uint32_t batchSize = 4096;
   const float meanBeta = 0.9f;
   const float varianceBeta = 0.999f;
   const float weightDecay = 0.1f;
-  const float policyLearningRate = 1.0f / sqrtf(batchSize);
-  const float valueLearningRate = 1.0f / sqrtf(batchSize);
+  const float policyLearningRate = 0.1f / sqrtf(batchSize);
+  const float valueLearningRate = 0.1f / sqrtf(batchSize);
   
   network policy;
   uint32_t policyParameters[] = {2, 8, 8, 1};
@@ -283,7 +268,9 @@ int main() {
     setCustomRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
     
+    float policyOutput[policyParameters[policyLayers + 1] * batchSize];
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    // checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     float err = 0;
     for (uint32_t batch = 0; batch < batchSize; batch++) {
       // float in = generateRandomFloat(&seed1, &seed2) * 0.2f;
@@ -291,14 +278,15 @@ int main() {
       valueInput[batch * 2] = in;
       valueInput[batch * 2 + 1] = 1.0f;
       valueTarget[batch] = -((0.1f - in) * (0.1f - in));
-      policyTargetOutGrad[batch] = 2-in;
-      err += 2-in;
+      policyTargetOutGrad[batch] = 1;
+      err += in;
+      if (batch == 1 && epoch % 16 == 0) printf("%f\n", in);
     }
 
     setOutputGradients(&policy, policyTargetOutGrad);
     backPropagate(&handle, &policy);
     updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
-    if (epoch % 1024 == 0) printf("Epoch: %d, Error: %f\n", epoch, err / batchSize);
+    if (epoch % 16 == 0) printf("avg: %f\n", err / batchSize);
     
     // setInput(&value, valueInput);
     // forwardPropagate(&handle, &value);
@@ -348,7 +336,7 @@ int main() {
     
     float valueGradient[valueParameters[0] * batchSize];
     checkCudaStatus(cudaMemcpy(valueGradient, value.outputGradients[0], valueParameters[0] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
-    printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], policyOutput[0], valuet, 2-in);
+    printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], in, valuet, 2-in);
     
     // printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], policyOutput[0], valuet, valueGradient[0]);
   }
