@@ -219,12 +219,12 @@ void backPropagate(cublasHandle_t *cublasHandle, network* net, bool errorPrint =
   if (debug) printf("\n");
 }
 
-void updateWeights(cublasHandle_t *cublasHandle, network* net, float betaMean, float betaVar, float learningRate, bool debug = false) {
+void updateWeights(cublasHandle_t *cublasHandle, network* net, float betaMean, float betaVar, float learningRate, float weightDecay, bool debug = false) {
   if (debug) printf("Update weights:\n");
   net->meanCorrection *= betaMean;
   net->varianceCorrection *= betaVar;
   for (uint32_t i = 0; i < net->layers + 1; i++) {
-    integratedAdamUpdate(net->weights[i], net->weightGradients[i], net->weightGradientsMean[i], net->weightGradientsVariance[i], betaMean, betaVar, net->meanCorrection, net->varianceCorrection, learningRate, net->parameters[i + 1] * net->parameters[i]);
+    integratedAdamUpdate(net->weights[i], net->weightGradients[i], net->weightGradientsMean[i], net->weightGradientsVariance[i], betaMean, betaVar, net->meanCorrection, net->varianceCorrection, learningRate, weightDecay, net->parameters[i + 1] * net->parameters[i]);
     if (debug) printDTensor(net->weights[i], net->parameters[i + 1], net->parameters[i], "weight");
   }
   if (debug) printf("\n");
@@ -250,12 +250,13 @@ int main() {
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
   
+  const uint32_t epochs = 4096 * 16;
+  const uint32_t batchSize = 4096;
   const float meanBeta = 0.9f;
   const float varianceBeta = 0.999f;
-  const float policyLearningRate = 0.001f;
-  const float valueLearningRate = 0.001f;
-  const uint32_t epochs = 4096 * 16;
-  const uint32_t batchSize = 1024;
+  const float weightDecay = 0.1f;
+  const float policyLearningRate = 0.1f / sqrtf(batchSize);
+  const float valueLearningRate = 0.1f / sqrtf(batchSize);
   
   network policy;
   uint32_t policyParameters[] = {2, 8, 8, 1};
@@ -284,34 +285,32 @@ int main() {
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     for (uint32_t batch = 0; batch < batchSize; batch++) {
       // float in = generateRandomFloat(&seed1, &seed2) * 0.2f;
-      float in = policyOutput[batch];
+      float in = policyOutput[batch] + generateRandomFloat(&seed1, &seed2);
       valueInput[batch * 2] = in;
       valueInput[batch * 2 + 1] = 1.0f;
-      
-      // if (in < -0.12f) {
-      //   valueTarget[batch] = 0.70;
-      // } else if (in < 0.12f) {
-      //   valueTarget[batch] = 0.90;
-      // } else {
-      //   valueTarget[batch] = 0.25;
-      // }
-      valueTarget[batch] = -(in * in);
+      valueTarget[batch] = -((0.1f - in) * (0.1f - in));
     }
     
     
     setInput(&value, valueInput);
     forwardPropagate(&handle, &value);
-    setOutputTarget(&handle, &value, valueTarget);
-    backPropagate(&handle, &value, epoch % 1024 == 0);
-    updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate);
+    // if (epoch < epochs / 2) {
+      setOutputTarget(&handle, &value, valueTarget);
+      backPropagate(&handle, &value, epoch % 1024 == 0);
+      updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate, weightDecay);
+    // }
     
-    if (epoch > epochs / 2) {
+    // if (epoch > epochs / 2) {
       setOutputGradientsToConstant(&value, 1.0f);
       backPropagate(&handle, &value);
       setOutputGradients(&policy, value.outputGradients[0], false);
       backPropagate(&handle, &policy);
-      updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate);
-    }
+      if (epoch == epochs - 1) {
+        updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay, true);
+      } else {
+        updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
+      }
+    // }
   }
   printf("\n");
   
@@ -330,16 +329,7 @@ int main() {
     float valuet;
     
     float in = policyOutput[0];
-    // float in = policyInput[1];
-    
-    // if (in < -0.12f) {
-    //   valuet = 0.70;
-    // } else if (in < 0.12f) {
-    //   valuet = 0.90;
-    // } else {
-    //   valuet = 0.25;
-    // }
-    valuet = -(in * in);
+    valuet = -((0.1f-in) * (0.1f-in));
     
     valueInput[0] = in;
     valueInput[1] = 1.0f;
@@ -352,7 +342,6 @@ int main() {
     checkCudaStatus(cudaMemcpy(valueGradient, value.outputGradients[0], valueParameters[0] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     
     printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], policyOutput[0], valuet, valueGradient[0]);
-    // printf("%f %f %f\n", policyInput[1], policyOutput[0], value);
   }
   printf("\n");
   
@@ -372,7 +361,7 @@ int main() {
     float valueInputGradient[valueParameters[valueLayers + 1] * batchSize];
     checkCudaStatus(cudaMemcpy(valueInputGradient, value.outputGradients[0], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     
-    printf("In: %f, Out: %f, expected: %f, Grad: %f\n", valueInput[0], valueOutput[0], -(valueInput[0] * valueInput[0]), valueInputGradient[0]);
+    printf("In: %f, Out: %f, expected: %f, Grad: %f\n", valueInput[0], valueOutput[0], -((0.1f - valueInput[0]) * (0.1f - valueInput[0])), valueInputGradient[0]);
   }
   
   freeNetwork(&policy);
