@@ -254,9 +254,9 @@ int main() {
   const uint32_t batchSize = 4096;
   const float meanBeta = 0.9f;
   const float varianceBeta = 0.999f;
-  const float weightDecay = 0.2f;
-  const float policyLearningRate = 0.1f / sqrtf(batchSize);
-  const float valueLearningRate = 0.1f / sqrtf(batchSize);
+  const float weightDecay = 0.1f;
+  const float policyLearningRate = 1.0f / sqrtf(batchSize);
+  const float valueLearningRate = 1.0f / sqrtf(batchSize);
   
   network policy;
   uint32_t policyParameters[] = {2, 8, 8, 1};
@@ -277,39 +277,47 @@ int main() {
     -1,  1,  0
   };
   
+  float policyTargetOutGrad[batchSize];
   float valueInput[valueParameters[0] * batchSize];
   for (uint32_t epoch = 0; epoch < epochs; epoch++) {
     setCustomRandomInput(&policy, &seed1, &seed2);
     forwardPropagate(&handle, &policy);
     
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    float err = 0;
     for (uint32_t batch = 0; batch < batchSize; batch++) {
       // float in = generateRandomFloat(&seed1, &seed2) * 0.2f;
       float in = policyOutput[batch];// + generateRandomFloat(&seed1, &seed2);
       valueInput[batch * 2] = in;
       valueInput[batch * 2 + 1] = 1.0f;
       valueTarget[batch] = -((0.1f - in) * (0.1f - in));
+      policyTargetOutGrad[batch] = 2-in;
+      err += 2-in;
     }
+
+    setOutputGradients(&policy, policyTargetOutGrad);
+    backPropagate(&handle, &policy);
+    updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
+    if (epoch % 1024 == 0) printf("Epoch: %d, Error: %f\n", epoch, err / batchSize);
     
-    
-    setInput(&value, valueInput);
-    forwardPropagate(&handle, &value);
+    // setInput(&value, valueInput);
+    // forwardPropagate(&handle, &value);
     // if (epoch < epochs / 2) {
-      setOutputTarget(&handle, &value, valueTarget);
-      backPropagate(&handle, &value, epoch % 1024 == 0);
-      updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate, weightDecay);
+      // setOutputTarget(&handle, &value, valueTarget);
+      // backPropagate(&handle, &value, epoch % 1024 == 0);
+      // updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate, weightDecay);
     // }
     
     // if (epoch > epochs / 2) {
-      setOutputGradientsToConstant(&value, 1.0f);
-      backPropagate(&handle, &value);
-      setOutputGradients(&policy, value.outputGradients[0], false);
-      backPropagate(&handle, &policy);
-      if (epoch == epochs - 1) {
-        updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay, true);
-      } else {
-        updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
-      }
+      // setOutputGradientsToConstant(&value, 1.0f);
+      // backPropagate(&handle, &value);
+      // setOutputGradients(&policy, value.outputGradients[0], false);
+      // backPropagate(&handle, &policy);
+      // if (epoch == epochs - 1) {
+      //   updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay, true);
+      // } else {
+      //   updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
+      // }
     // }
   }
   printf("\n");
@@ -340,8 +348,9 @@ int main() {
     
     float valueGradient[valueParameters[0] * batchSize];
     checkCudaStatus(cudaMemcpy(valueGradient, value.outputGradients[0], valueParameters[0] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
+    printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], policyOutput[0], valuet, 2-in);
     
-    printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], policyOutput[0], valuet, valueGradient[0]);
+    // printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], policyOutput[0], valuet, valueGradient[0]);
   }
   printf("\n");
   
