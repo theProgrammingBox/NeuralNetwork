@@ -254,7 +254,7 @@ int main() {
   const uint32_t batchSize = 4096;
   const float meanBeta = 0.9f;
   const float varianceBeta = 0.999f;
-  const float weightDecay = 0.1f;
+  const float weightDecay = 0.2f;
   const float policyLearningRate = 0.1f / sqrtf(batchSize);
   const float valueLearningRate = 0.1f / sqrtf(batchSize);
   
@@ -285,7 +285,7 @@ int main() {
     checkCudaStatus(cudaMemcpy(policyOutput, policy.outputs[policyLayers + 1], policyParameters[policyLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     for (uint32_t batch = 0; batch < batchSize; batch++) {
       // float in = generateRandomFloat(&seed1, &seed2) * 0.2f;
-      float in = policyOutput[batch] + generateRandomFloat(&seed1, &seed2);
+      float in = policyOutput[batch];// + generateRandomFloat(&seed1, &seed2);
       valueInput[batch * 2] = in;
       valueInput[batch * 2 + 1] = 1.0f;
       valueTarget[batch] = -((0.1f - in) * (0.1f - in));
