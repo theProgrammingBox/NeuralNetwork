@@ -3,6 +3,7 @@
 /*
 TASKS:
 - maybe reimplement everything cuz that custom rand fill bug could have really messed up past results
+- add bias at least for first layer
 */
 
 struct network {
@@ -234,8 +235,8 @@ int main() {
   cublasHandle_t handle;
   checkCublasStatus(cublasCreate(&handle));
   
-  const uint32_t epochs = 1024;
-  // const uint32_t epochs = 4096 * 16;
+  // const uint32_t epochs = 1024;
+  const uint32_t epochs = 4096 * 4;
   const uint32_t batchSize = 4096;
   const float meanBeta = 0.9f;
   const float varianceBeta = 0.999f;
@@ -277,34 +278,35 @@ int main() {
       float in = policyOutput[batch];// + generateRandomFloat(&seed1, &seed2);
       valueInput[batch * 2] = in;
       valueInput[batch * 2 + 1] = 1.0f;
-      valueTarget[batch] = -((0.1f - in) * (0.1f - in));
-      policyTargetOutGrad[batch] = 1;
-      err += in;
-      if (batch == 1 && epoch % 16 == 0) printf("%f\n", in);
+      float temp = (0.2f - in);
+      valueTarget[batch] = -temp * temp;
+      // policyTargetOutGrad[batch] = 1;
+      // err += in;
+      // if (batch == 1 && epoch % 16 == 0) printf("%f\n", in);
     }
 
-    setOutputGradients(&policy, policyTargetOutGrad);
-    backPropagate(&handle, &policy);
-    updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
-    if (epoch % 16 == 0) printf("avg: %f\n", err / batchSize);
+    // setOutputGradients(&policy, policyTargetOutGrad);
+    // backPropagate(&handle, &policy);
+    // updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
+    // if (epoch % 16 == 0) printf("avg: %f\n", err / batchSize);
     
-    // setInput(&value, valueInput);
-    // forwardPropagate(&handle, &value);
+    setInput(&value, valueInput);
+    forwardPropagate(&handle, &value);
     // if (epoch < epochs / 2) {
-      // setOutputTarget(&handle, &value, valueTarget);
-      // backPropagate(&handle, &value, epoch % 1024 == 0);
-      // updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate, weightDecay);
+      setOutputTarget(&handle, &value, valueTarget);
+      backPropagate(&handle, &value, epoch % 1024 == 0);
+      updateWeights(&handle, &value, meanBeta, varianceBeta, valueLearningRate, weightDecay);
     // }
     
     // if (epoch > epochs / 2) {
-      // setOutputGradientsToConstant(&value, 1.0f);
-      // backPropagate(&handle, &value);
-      // setOutputGradients(&policy, value.outputGradients[0], false);
-      // backPropagate(&handle, &policy);
+      setOutputGradientsToConstant(&value, 1.0f);
+      backPropagate(&handle, &value);
+      setOutputGradients(&policy, value.outputGradients[0], false);
+      backPropagate(&handle, &policy);
       // if (epoch == epochs - 1) {
-      //   updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay, true);
+        // updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay, true);
       // } else {
-      //   updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
+        updateWeights(&handle, &policy, meanBeta, varianceBeta, policyLearningRate, weightDecay);
       // }
     // }
   }
@@ -325,7 +327,7 @@ int main() {
     float valuet;
     
     float in = policyOutput[0];
-    valuet = -((0.1f-in) * (0.1f-in));
+    float temp = (0.2f - in);
     
     valueInput[0] = in;
     valueInput[1] = 1.0f;
@@ -336,7 +338,7 @@ int main() {
     
     float valueGradient[valueParameters[0] * batchSize];
     checkCudaStatus(cudaMemcpy(valueGradient, value.outputGradients[0], valueParameters[0] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
-    printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], in, valuet, 2-in);
+    printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], in, -temp * temp, valueGradient[0]);
     
     // printf("In: %f, Out: %f, Score: %f, Grad: %f\n", policyInput[1], policyOutput[0], valuet, valueGradient[0]);
   }
@@ -358,7 +360,9 @@ int main() {
     float valueInputGradient[valueParameters[valueLayers + 1] * batchSize];
     checkCudaStatus(cudaMemcpy(valueInputGradient, value.outputGradients[0], valueParameters[valueLayers + 1] * batchSize * sizeof(float), cudaMemcpyDeviceToHost));
     
-    printf("In: %f, Out: %f, expected: %f, Grad: %f\n", valueInput[0], valueOutput[0], -((0.1f - valueInput[0]) * (0.1f - valueInput[0])), valueInputGradient[0]);
+    float in = valueInput[0];
+    float temp = (0.2f - in);
+    printf("In: %f, Out: %f, expected: %f, Grad: %f\n", in, valueOutput[0], -temp * temp, valueInputGradient[0]);
   }
   
   freeNetwork(&policy);
