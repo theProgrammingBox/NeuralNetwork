@@ -1,24 +1,28 @@
 #include <stdio.h>
-
 #include <cuda_runtime.h>
 
 __global__ void fillOne(int size, float *data) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= size) return;
-	data[i] = 1;
+	int itr = ceil(size / float(blockDim.x));
+	int idx;
+	for (int j = 0; j < itr; j++) {
+		idx = blockDim.x * j + i;
+		if (idx >= size) break;
+		data[idx] = 1;
+	}
 }
 
-__global__ void prefixSum(int size, float *data, int itr, float r) {
+__global__ void prefixSum(int size, float *data) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	int threads = blockDim.x;
-	int temp;
 	int exp = 1;
-	int rep = ceil(r);
+	int rep = ceil(size / float(blockDim.x));
+	int itr = floor(log2f(size));
+	int idx;
 	for (int j = 0; j < itr; j++) {
 		for (int k = 0; k < rep; k++) {
-			temp = (threads * k + i) * exp * 2 - 1;
-			if (temp >= size) break;
-			data[temp] = data[temp] + data[temp - exp];
+			idx = (blockDim.x * k + i) * exp * 2 - 1;
+			if (idx >= size) break;
+			data[idx] = data[idx] + data[idx - exp];
 		}
 		__syncthreads();
 		exp <<= 1;
@@ -27,11 +31,11 @@ __global__ void prefixSum(int size, float *data, int itr, float r) {
 	
 	for (int j = 0; j < itr; j++) {
 		exp >>= 1;
-		rep <<= 1;
+		rep <<= 1;	// not correct, but the break should compensate
 		for (int k = 0; k < rep; k++) {
-			temp = (threads * k + i) * exp * 2 - 1 + exp;
-			if (temp >= size) break;
-			data[temp] = data[temp] + data[temp - exp];
+			idx = (blockDim.x * k + i) * exp * 2 - 1 + exp;
+			if (idx >= size) break;
+			data[idx] = data[idx] + data[idx - exp];
 		}
 		__syncthreads();
 	}
@@ -49,17 +53,12 @@ void printDataDev(float *dataDev, int size) {
 
 int main(int argc, char *argv[])
 {
-	const int size = 100;
+	const int size = 1025;
 	float *dataDev;
-	
 	cudaMalloc(&dataDev, size * sizeof(float));
-	
 	fillOne<<<1, 1024>>>(size, dataDev);
-	
-	prefixSum<<<1, 16>>>(size, dataDev, floor(log2(size)), (1023.0f / 16));
+	prefixSum<<<1, 1024>>>(size, dataDev);
 	printDataDev(dataDev, size);
-	printf("floor(log2(size)) = %.0f, (1023.0f / 16) = %.0f\n", floor(log2(size)), (1023.0f / 16));
-	
 	cudaFree(dataDev);
 	
 	return 0;
