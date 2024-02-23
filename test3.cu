@@ -39,7 +39,24 @@ void fillRand(uint32_t size, float *inputDev, uint32_t* seed1, uint32_t* seed2) 
 	mixSeed(seed1, seed2);
 }
 
-__global__ void prefixSum(uint32_t size, float *data, uint32_t elems, uint32_t jointSize, uint32_t elemOffset) {
+void printMatrices(float *inputDev, int size, int n, uint32_t jointSize, uint32_t elemOffset, uint32_t w, uint32_t h) {
+	float *data = (float *)malloc(size * sizeof(float));
+	cudaMemcpy(data, inputDev, size * sizeof(float), cudaMemcpyDeviceToHost);
+    for (uint32_t pair = 0; pair < n; pair++) {
+		uint32_t max_height = h > w ? h : w;
+		for (uint32_t row = 0; row < max_height; row++) {
+			if (row < w) for (uint32_t col = 0; col < w; col++) printf("%.2f, ", data[pair * jointSize + row * w + col]);
+			else for (uint32_t col = 0; col < w; col++) printf("      ");
+			printf("\t");
+			if (row < h) for (uint32_t col = 0; col < w; col++) printf("%.2f, ", data[pair * jointSize + elemOffset + row * w + col]);
+			printf("\n");
+		}
+		printf("\n");
+	}
+	free(data);
+}
+
+__global__ void inputDependentScan(uint32_t size, float *data, uint32_t elems, uint32_t jointSize, uint32_t elemOffset) {
 	uint32_t i = blockIdx.x * blockDim.x + threadIdx.x + 1;
 	uint32_t exp = jointSize;
 	uint32_t rep = ceil(elems / float(blockDim.x));
@@ -69,9 +86,9 @@ __global__ void prefixSum(uint32_t size, float *data, uint32_t elems, uint32_t j
 		__syncthreads();
 	}
 }
-void prefixSum(uint32_t size, float *inputDev, float *outputDev, uint32_t elems, uint32_t jointSize, uint32_t elemOffset) {
+void inputDependentScan(uint32_t size, float *inputDev, float *outputDev, uint32_t elems, uint32_t jointSize, uint32_t elemOffset) {
 	cudaMemcpy(outputDev, inputDev, size * sizeof(float), cudaMemcpyDeviceToDevice);
-	prefixSum<<<1, 1024>>>(size, outputDev, elems, jointSize, elemOffset);
+	inputDependentScan<<<1, 1024>>>(size, outputDev, elems, jointSize, elemOffset);
 }
 
 void checkError(uint32_t size, float *inputDev, float *outputDev, uint32_t elems, uint32_t jointSize, uint32_t elemOffset) {
@@ -94,22 +111,6 @@ void checkError(uint32_t size, float *inputDev, float *outputDev, uint32_t elems
 	free(output);
 }
 
-void printMatrices(float *inputDev, int size, int n, uint32_t jointSize, uint32_t elemOffset, uint32_t w, uint32_t h) {
-	float *data = (float *)malloc(size * sizeof(float));
-	cudaMemcpy(data, inputDev, size * sizeof(float), cudaMemcpyDeviceToHost);
-    for (uint32_t pair = 0; pair < n; pair++) {
-		uint32_t max_height = h > w ? h : w;
-		for (uint32_t row = 0; row < max_height; row++) {
-			if (row < w) for (uint32_t col = 0; col < w; col++) printf("%.2f, ", data[pair * jointSize + row * w + col]);
-			else for (uint32_t col = 0; col < w; col++) printf("      ");
-			printf("\t");
-			if (row < h) for (uint32_t col = 0; col < w; col++) printf("%.2f, ", data[pair * jointSize + elemOffset + row * w + col]);
-			printf("\n");
-		}
-		printf("\n");
-	}
-}
-
 int main(int argc, char *argv[])
 {
 	const uint32_t width = 2;
@@ -125,11 +126,10 @@ int main(int argc, char *argv[])
 	cudaMalloc(&inputDev, size * sizeof(float));
 	cudaMalloc(&outputDev, size * sizeof(float));
 	fillRand(size, inputDev, &seed1, &seed2);
-	printMatrices(inputDev, size, elems, jointSize, elemOffset, width, height);
-	// printDataDev(inputDev, size, elems, jointSize, elemOffset, width, height);
+	// printMatrices(inputDev, size, elems, jointSize, elemOffset, width, height);
 	
-	// prefixSum(size, inputDev, outputDev, elems, jointSize, elemOffset);
-	// printDataDev(outputDev, size, elems, jointSize, width, height);
+	inputDependentScan(size, inputDev, outputDev, elems, jointSize, elemOffset);
+	printMatrices(outputDev, size, elems, jointSize, elemOffset, width, height);
 	// checkError(size, inputDev, outputDev, elems, jointSize, elemOffset);
 	cudaFree(inputDev);
 	cudaFree(outputDev);
